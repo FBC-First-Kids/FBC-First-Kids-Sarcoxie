@@ -1,0 +1,64 @@
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { Stack, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect } from 'react';
+import { useColorScheme } from 'react-native';
+
+import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { maybePromoteChildren } from '@/lib/grade-promotion';
+
+SplashScreen.preventAutoHideAsync();
+
+function AuthGate() {
+  const { session, loading, locked } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading) return;
+
+    const onAuthScreen =
+      segments[0] === 'login' || segments[0] === 'signup' || segments[0] === 'pin-signin';
+    const authed = session && !locked;
+    if (!authed && !onAuthScreen) {
+      // Clear any stacked modals (parent-signin, admin, etc.) before redirecting so
+      // we don't leave stale screens sitting underneath the login modal.
+      if (router.canDismiss()) router.dismissAll();
+      router.replace('/login');
+    } else if (authed && onAuthScreen) {
+      // Same here — clear the login/pin-signin modal stack so PIN sign-in lands
+      // cleanly on the kiosk home instead of revealing a leftover screen underneath.
+      if (router.canDismiss()) router.dismissAll();
+      router.replace('/');
+    }
+  }, [session, locked, loading, segments, router]);
+
+  useEffect(() => {
+    if (session) {
+      maybePromoteChildren();
+    }
+  }, [session]);
+
+  return null;
+}
+
+export default function RootLayout() {
+  const colorScheme = useColorScheme();
+  return (
+    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <AuthProvider>
+        <AnimatedSplashOverlay />
+        <AuthGate />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="login" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="signup" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="pin-signin" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="setup-pin" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="parent-signin" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="admin" options={{ presentation: 'modal' }} />
+        </Stack>
+      </AuthProvider>
+    </ThemeProvider>
+  );
+}
