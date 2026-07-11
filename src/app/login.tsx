@@ -30,7 +30,6 @@ export default function LoginScreen() {
   const [hasPinProfiles, setHasPinProfiles] = useState(false);
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
     getPinProfiles().then((profiles) => setHasPinProfiles(profiles.length > 0));
   }, []);
 

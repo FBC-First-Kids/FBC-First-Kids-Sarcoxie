@@ -1,6 +1,5 @@
 import type { Session } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 import { updatePinProfileToken } from '@/lib/pin-auth';
@@ -45,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Supabase rotates the refresh token on every background refresh, which
       // invalidates whatever was stored at PIN setup time. Keep it in sync here
       // so Quick PIN sign-in always has a currently-valid token.
-      if (Platform.OS !== 'web' && newSession?.user.email && newSession.refresh_token) {
+      if (newSession?.user.email && newSession.refresh_token) {
         updatePinProfileToken(newSession.user.email, newSession.refresh_token).catch((err) => {
           console.error('pin-auth: failed to sync refreshed token', err);
         });

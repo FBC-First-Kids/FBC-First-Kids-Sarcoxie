@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Platform, Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -22,13 +22,11 @@ export default function KioskHomeScreen() {
             Signed in as {staffName ?? session?.user.email}
           </ThemedText>
           <ThemedView style={styles.headerLinks}>
-            {Platform.OS !== 'web' && (
-              <Pressable onPress={() => router.push('/setup-pin')}>
-                <ThemedText type="link" themeColor="textSecondary">
-                  Set Up Quick PIN
-                </ThemedText>
-              </Pressable>
-            )}
+            <Pressable onPress={() => router.push('/setup-pin')}>
+              <ThemedText type="link" themeColor="textSecondary">
+                Set Up Quick PIN
+              </ThemedText>
+            </Pressable>
             <Pressable onPress={lock}>
               <ThemedText type="link" themeColor="textSecondary">
                 Sign Out

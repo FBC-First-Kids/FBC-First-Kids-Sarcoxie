@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 const STORAGE_KEY = 'kids_checkin_pin_profiles';
 
@@ -9,8 +10,26 @@ export type PinProfile = {
   refreshToken: string;
 };
 
+// Native keeps using the OS-encrypted keychain via expo-secure-store. Web has no
+// equivalent secure storage, so it falls back to localStorage — still scoped to
+// this one device/browser, but not encrypted at rest like the native keychain.
+async function readStorage(): Promise<string | null> {
+  if (Platform.OS === 'web') {
+    return window.localStorage.getItem(STORAGE_KEY);
+  }
+  return SecureStore.getItemAsync(STORAGE_KEY);
+}
+
+async function writeStorage(json: string): Promise<void> {
+  if (Platform.OS === 'web') {
+    window.localStorage.setItem(STORAGE_KEY, json);
+    return;
+  }
+  await SecureStore.setItemAsync(STORAGE_KEY, json);
+}
+
 export async function getPinProfiles(): Promise<PinProfile[]> {
-  const raw = await SecureStore.getItemAsync(STORAGE_KEY);
+  const raw = await readStorage();
   if (!raw) return [];
   try {
     return JSON.parse(raw) as PinProfile[];
@@ -24,9 +43,9 @@ async function saveProfiles(profiles: PinProfile[]) {
   const json = JSON.stringify(profiles);
   console.log(`pin-auth: writing ${profiles.length} profile(s), ${json.length} bytes`);
   try {
-    await SecureStore.setItemAsync(STORAGE_KEY, json);
+    await writeStorage(json);
   } catch (err) {
-    console.error('pin-auth: SecureStore.setItemAsync threw', err);
+    console.error('pin-auth: writeStorage threw', err);
     throw err;
   }
 }

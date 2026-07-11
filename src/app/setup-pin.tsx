@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -20,26 +20,6 @@ export default function SetupPinScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-
-  if (Platform.OS === 'web') {
-    return (
-      <ThemedView style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
-          <Pressable onPress={() => router.replace('/')} style={styles.cancel}>
-            <ThemedText type="link" themeColor="textSecondary">
-              Back to Kiosk
-            </ThemedText>
-          </Pressable>
-          <ThemedText type="title" style={styles.title}>
-            Quick PIN Sign-In
-          </ThemedText>
-          <ThemedText themeColor="textSecondary" style={styles.centerText}>
-            Quick PIN sign-in isn't available in the web preview — this works on the iPad app.
-          </ThemedText>
-        </SafeAreaView>
-      </ThemedView>
-    );
-  }
 
   async function handleSave() {
     setError(null);
