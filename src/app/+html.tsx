@@ -1,6 +1,10 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
 import type { PropsWithChildren } from 'react';
 
+// Base path this build is served under (e.g. "/FBC-First-Kids-Sarcoxie" on GitHub
+// Pages, empty string at a domain root like Netlify) — see app.json experiments.baseUrl.
+const baseUrl = process.env.EXPO_BASE_URL ?? '';
+
 // Customizes the root HTML document for the static web export so the app can be
 // added to the iPad home screen as a standalone PWA (own icon, no Safari chrome).
 export default function Root({ children }: PropsWithChildren) {
@@ -19,9 +23,9 @@ export default function Root({ children }: PropsWithChildren) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="First Kids" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="apple-touch-icon" href={`${baseUrl}/apple-touch-icon.png`} />
 
-        <link rel="manifest" href="/manifest.json" />
+        <link rel="manifest" href={`${baseUrl}/manifest.json`} />
 
         <ScrollViewStyleReset />
       </head>
