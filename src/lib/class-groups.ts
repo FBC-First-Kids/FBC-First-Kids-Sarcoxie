@@ -39,3 +39,18 @@ export function nextGrade(grade: string): string | null {
   if (index === -1 || index === GRADE_ORDER.length - 1) return null;
   return GRADE_ORDER[index + 1];
 }
+
+// What a staff member helps with — separate from `role` (which is the admin
+// permission level, staff vs main_admin). An invite code carries one of these
+// so a new staff member is tagged with it automatically at sign-up.
+export const STAFF_POSITION_OPTIONS = [
+  { value: 'pre_k', label: 'Pre-K Teacher' },
+  { value: 'k_2', label: 'K - 2nd Teacher' },
+  { value: '3_5', label: '3rd - 5th Teacher' },
+  { value: 'volunteer', label: 'Volunteer' },
+] as const;
+
+export function staffPositionLabel(value: string | null) {
+  if (!value) return 'No position set';
+  return STAFF_POSITION_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}

@@ -11,6 +11,29 @@
 alter table staff add column if not exists role text not null default 'staff'
   check (role in ('staff', 'main_admin'));
 
+-- role is the admin PERMISSION level only (staff vs main_admin) — it must never
+-- hold anything else, since is_main_admin()/the triggers below key off it
+-- directly. Repairs any row that was hand-edited to something else (e.g. via
+-- the Supabase Table Editor) and adds an explicitly-named constraint so this
+-- is enforced going forward regardless of how the original inline check ended
+-- up being applied.
+update staff set role = 'staff' where role not in ('staff', 'main_admin');
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.check_constraints
+    where constraint_name = 'staff_role_valid'
+  ) then
+    alter table staff add constraint staff_role_valid check (role in ('staff', 'main_admin'));
+  end if;
+end $$;
+
+-- What a staff member helps with (Pre-K/K-2/3rd-5th teacher, or volunteer) —
+-- a separate concern from role. Carried from the invite code they signed up
+-- with; see redeem_staff_invite below.
+alter table staff add column if not exists position text
+  check (position is null or position in ('pre_k', 'k_2', '3_5', 'volunteer'));
+
 create table if not exists staff_invites (
   id uuid primary key default gen_random_uuid(),
   code text not null unique,
@@ -21,6 +44,8 @@ create table if not exists staff_invites (
   used_by uuid references staff(id)
 );
 alter table staff_invites enable row level security;
+alter table staff_invites add column if not exists position text
+  check (position is null or position in ('pre_k', 'k_2', '3_5', 'volunteer'));
 
 create or replace function is_main_admin()
 returns boolean
@@ -36,7 +61,10 @@ returns trigger
 language plpgsql
 as $$
 begin
-  if new.role is distinct from old.role and not is_main_admin() then
+  -- auth.uid() is null for direct/privileged database access (SQL Editor,
+  -- service-role connections, migrations) — only enforce this guard for real
+  -- end-user sessions going through the app, not administrative SQL access.
+  if new.role is distinct from old.role and auth.uid() is not null and not is_main_admin() then
     raise exception 'Only main admins can change staff roles';
   end if;
   return new;
@@ -116,12 +144,13 @@ set search_path = public
 as $$
 declare
   invite_id uuid;
+  invite_position text;
 begin
   if auth.uid() is null then
     raise exception 'Not authenticated';
   end if;
 
-  select id into invite_id from staff_invites
+  select id, position into invite_id, invite_position from staff_invites
     where code = p_code and used_at is null and (expires_at is null or expires_at > now())
     for update skip locked
     limit 1;
@@ -132,9 +161,9 @@ begin
 
   update staff_invites set used_at = now(), used_by = auth.uid() where id = invite_id;
 
-  insert into staff (id, full_name, role)
-    values (auth.uid(), p_full_name, 'staff')
-    on conflict (id) do update set full_name = excluded.full_name;
+  insert into staff (id, full_name, role, position)
+    values (auth.uid(), p_full_name, 'staff', invite_position)
+    on conflict (id) do update set full_name = excluded.full_name, position = excluded.position;
 
   return true;
 end;

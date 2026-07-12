@@ -6,6 +6,7 @@ import { AdminChrome } from '@/components/admin-chrome';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { STAFF_POSITION_OPTIONS, staffPositionLabel } from '@/lib/class-groups';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
@@ -25,12 +26,14 @@ type StaffRow = {
   id: string;
   full_name: string;
   role: 'staff' | 'main_admin';
+  position: string | null;
 };
 
 type InviteRow = {
   id: string;
   code: string;
   created_at: string;
+  position: string | null;
 };
 
 export default function AdminAdminsScreen() {
@@ -44,6 +47,7 @@ export default function AdminAdminsScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [invitePosition, setInvitePosition] = useState<string | null>(null);
 
   const mainAdminCount = staff.filter((s) => s.role === 'main_admin').length;
 
@@ -61,10 +65,10 @@ export default function AdminAdminsScreen() {
 
     const [{ data: staffRows, error: staffError }, { data: inviteRows, error: inviteError }] =
       await Promise.all([
-        supabase.from('staff').select('id, full_name, role').order('full_name'),
+        supabase.from('staff').select('id, full_name, role, position').order('full_name'),
         supabase
           .from('staff_invites')
-          .select('id, code, created_at')
+          .select('id, code, created_at, position')
           .is('used_at', null)
           .order('created_at', { ascending: false }),
       ]);
@@ -145,15 +149,15 @@ export default function AdminAdminsScreen() {
   }
 
   async function handleGenerateInvite() {
-    if (!session) return;
+    if (!session || !invitePosition) return;
     setActionError(null);
     setGenerating(true);
 
     const code = generateInviteCode();
     const { data, error } = await supabase
       .from('staff_invites')
-      .insert({ code, created_by: session.user.id })
-      .select('id, code, created_at')
+      .insert({ code, created_by: session.user.id, position: invitePosition })
+      .select('id, code, created_at, position')
       .single();
 
     if (error || !data) {
@@ -164,6 +168,7 @@ export default function AdminAdminsScreen() {
     }
 
     setInvites((prev) => [data, ...prev]);
+    setInvitePosition(null);
     setGenerating(false);
   }
 
@@ -222,6 +227,7 @@ export default function AdminAdminsScreen() {
                       <ThemedText style={styles.rowName}>{row.full_name}</ThemedText>
                       <ThemedText themeColor="textSecondary" type="small">
                         {row.role === 'main_admin' ? 'Main Admin' : 'Staff'}
+                        {row.position ? ` · ${staffPositionLabel(row.position)}` : ''}
                       </ThemedText>
                     </View>
                     <View style={styles.rowActions}>
@@ -259,15 +265,34 @@ export default function AdminAdminsScreen() {
               </ThemedText>
               <ThemedText themeColor="textSecondary" type="small">
                 Share a code with a new staff member so they can create an account. Each code works
-                once.
+                once and is tied to a position.
               </ThemedText>
+
+              <View style={styles.chipRow}>
+                {STAFF_POSITION_OPTIONS.map((option) => {
+                  const selected = invitePosition === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      onPress={() => setInvitePosition(option.value)}
+                      style={[
+                        styles.chip,
+                        { backgroundColor: selected ? theme.text : theme.backgroundElement },
+                      ]}>
+                      <ThemedText type="small" style={{ color: selected ? theme.background : theme.text }}>
+                        {option.label}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
 
               <Pressable
                 onPress={handleGenerateInvite}
-                disabled={generating}
+                disabled={generating || !invitePosition}
                 style={({ pressed }) => [
                   styles.button,
-                  { backgroundColor: theme.text, opacity: pressed || generating ? 0.6 : 1 },
+                  { backgroundColor: theme.text, opacity: pressed || generating || !invitePosition ? 0.6 : 1 },
                 ]}>
                 {generating ? (
                   <ActivityIndicator color={theme.background} />
@@ -286,7 +311,12 @@ export default function AdminAdminsScreen() {
                 ) : (
                   invites.map((invite) => (
                     <ThemedView key={invite.id} type="backgroundElement" style={styles.row}>
-                      <ThemedText style={styles.codeText}>{invite.code}</ThemedText>
+                      <View style={styles.rowInfo}>
+                        <ThemedText style={styles.codeText}>{invite.code}</ThemedText>
+                        <ThemedText themeColor="textSecondary" type="small">
+                          {staffPositionLabel(invite.position)}
+                        </ThemedText>
+                      </View>
                       {busyId === invite.id ? (
                         <ActivityIndicator color={theme.text} />
                       ) : (
@@ -360,6 +390,16 @@ const styles = StyleSheet.create({
   rowActions: {
     flexDirection: 'row',
     gap: Spacing.three,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  chip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    borderRadius: Spacing.five,
   },
   deleteText: {
     color: '#D0342C',
