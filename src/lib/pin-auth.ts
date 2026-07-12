@@ -46,13 +46,33 @@ export async function verifyOwnPin(pin: string): Promise<boolean> {
   return data === true;
 }
 
-// Signs in on any device using just email + PIN, via the pin-signin Edge
-// Function, which verifies server-side and mints a real session.
-export async function signInWithPin(email: string, pin: string): Promise<{ error: string | null }> {
+export type PinStaffOption = {
+  id: string;
+  full_name: string;
+};
+
+// Names of staff who have a PIN set up — lets Quick Sign In show a tap-to-pick
+// list instead of asking for an email, on any device.
+export async function listPinStaff(): Promise<PinStaffOption[]> {
+  const { data, error } = await supabase.rpc('list_pin_staff');
+  if (error) {
+    console.error('list_pin_staff failed', error);
+    return [];
+  }
+  return data ?? [];
+}
+
+// Signs in on any device using just a staff id (picked from listPinStaff) +
+// PIN, via the pin-signin Edge Function, which verifies server-side and mints
+// a real session. The account's email never reaches the client.
+export async function signInWithPin(
+  staffId: string,
+  pin: string,
+): Promise<{ error: string | null }> {
   const { data, error } = await supabase.functions.invoke<{
     access_token?: string;
     refresh_token?: string;
-  }>('pin-signin', { body: { email, pin } });
+  }>('pin-signin', { body: { staffId, pin } });
 
   if (error || !data?.access_token || !data.refresh_token) {
     console.error('pin sign-in failed', error);
@@ -62,7 +82,7 @@ export async function signInWithPin(email: string, pin: string): Promise<{ error
     if (error && error.name !== 'FunctionsHttpError') {
       return { error: 'Could not reach the server. Check your connection and try again.' };
     }
-    return { error: 'Invalid email or PIN, or too many attempts. Please try again shortly.' };
+    return { error: 'Incorrect PIN. Please try again.' };
   }
 
   const { error: setSessionError } = await supabase.auth.setSession({

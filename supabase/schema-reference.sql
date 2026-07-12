@@ -219,41 +219,55 @@ end;
 $$;
 grant execute on function verify_own_pin(text) to authenticated;
 
-create or replace function verify_staff_pin(p_email text, p_pin text)
-returns uuid
+-- Names of staff who have a PIN set up — lets Quick Sign In show a tap-to-pick
+-- list instead of asking for an email, on any device.
+create or replace function list_pin_staff()
+returns table(id uuid, full_name text)
+language sql
+security definer
+set search_path = public
+as $$
+  select id, full_name from staff where pin_hash is not null order by full_name;
+$$;
+grant execute on function list_pin_staff() to anon, authenticated;
+
+-- Superseded the earlier (p_email text, p_pin text) version — sign-in now
+-- identifies the account by id (picked from list_pin_staff) instead of email,
+-- so a staff member's email is never exposed to the client.
+drop function if exists verify_staff_pin(text, text);
+
+create or replace function verify_staff_pin(p_staff_id uuid, p_pin text)
+returns boolean
 language plpgsql
 security definer
-set search_path = public, extensions, auth
+set search_path = public, extensions
 as $$
 declare
-  target_id uuid;
   target_hash text;
   target_attempts int;
   target_locked_until timestamptz;
 begin
-  select u.id, s.pin_hash, s.pin_attempts, s.pin_locked_until
-    into target_id, target_hash, target_attempts, target_locked_until
-    from auth.users u
-    join staff s on s.id = u.id
-    where lower(u.email) = lower(p_email);
+  select pin_hash, pin_attempts, pin_locked_until
+    into target_hash, target_attempts, target_locked_until
+    from staff where id = p_staff_id;
 
-  if target_id is null or target_hash is null then
-    return null;
+  if target_hash is null then
+    return false;
   end if;
   if target_locked_until is not null and target_locked_until > now() then
-    return null;
+    return false;
   end if;
 
   if crypt(p_pin, target_hash) = target_hash then
-    update staff set pin_attempts = 0, pin_locked_until = null where id = target_id;
-    return target_id;
+    update staff set pin_attempts = 0, pin_locked_until = null where id = p_staff_id;
+    return true;
   else
     update staff
       set pin_attempts = pin_attempts + 1,
           pin_locked_until = case when pin_attempts + 1 >= 5 then now() + interval '15 minutes' else pin_locked_until end
-      where id = target_id;
-    return null;
+      where id = p_staff_id;
+    return false;
   end if;
 end;
 $$;
-grant execute on function verify_staff_pin(text, text) to anon, authenticated;
+grant execute on function verify_staff_pin(uuid, text) to anon, authenticated;

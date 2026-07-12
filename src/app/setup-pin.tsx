@@ -133,6 +133,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: Spacing.three,
     right: Spacing.four,
+    zIndex: 1,
   },
   title: {
     textAlign: 'center',

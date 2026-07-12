@@ -62,7 +62,11 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST \"https://tlskfoemfxuhlhyqdztf.supabase.co/functions/v1/pin-signin\" -H \"Content-Type: application/json\" -d '{\"email\":\"test@example.com\",\"pin\":\"0000\"}')",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST \"https://tlskfoemfxuhlhyqdztf.functions.supabase.co/pin-signin\" -H \"Content-Type: application/json\" -d '{\"email\":\"test@example.com\",\"pin\":\"0000\"}')",
       "PowerShell(Get-NetTCPConnection -LocalPort 8096 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')",
-      "PowerShell(Get-NetTCPConnection -LocalPort 8097 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')"
+      "PowerShell(Get-NetTCPConnection -LocalPort 8097 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8098 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8099 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8100)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8100 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')"
     ]
   }
 }
