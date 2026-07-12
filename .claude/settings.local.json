@@ -45,7 +45,12 @@
       "Bash(git commit -q -m ' *)",
       "Bash(git push *)",
       "PowerShell(Get-NetTCPConnection -LocalPort 8091 -ErrorAction SilentlyContinue)",
-      "PowerShell(Stop-Process -Id 21004 -Force -ErrorAction SilentlyContinue)"
+      "PowerShell(Stop-Process -Id 21004 -Force -ErrorAction SilentlyContinue)",
+      "Bash(echo \"clean: $?\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8092 -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 21032 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell('stopped')",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8093,8094 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')"
     ]
   }
 }

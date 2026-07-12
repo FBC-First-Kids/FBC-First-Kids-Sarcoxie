@@ -14,12 +14,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { checkInviteCode, redeemInvite, setPendingInvite } from '@/lib/staff-invites';
 import { supabase } from '@/lib/supabase';
 
 export default function SignUpScreen() {
   const theme = useTheme();
   const router = useRouter();
   const [fullName, setFullName] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -34,6 +36,11 @@ export default function SignUpScreen() {
       setError('Please enter your name.');
       return;
     }
+    const code = inviteCode.trim();
+    if (!code) {
+      setError('Please enter your invite code from an admin.');
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
@@ -44,6 +51,14 @@ export default function SignUpScreen() {
     }
 
     setLoading(true);
+
+    const codeValid = await checkInviteCode(code);
+    if (!codeValid) {
+      setError('That invite code is invalid or has expired. Please ask an admin for a new one.');
+      setLoading(false);
+      return;
+    }
+
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
@@ -55,19 +70,24 @@ export default function SignUpScreen() {
       return;
     }
 
-    if (data.session && data.user) {
-      const { error: staffError } = await supabase
-        .from('staff')
-        .insert({ id: data.user.id, full_name: fullName.trim() });
-
-      if (staffError) {
-        console.error('staff insert failed', staffError);
+    if (data.session) {
+      const redeemed = await redeemInvite(code, fullName.trim());
+      if (!redeemed) {
+        setError(
+          'That invite code was just used by someone else. Please ask an admin for a new one, then sign in with the email and password you just set.',
+        );
+        setLoading(false);
+        return;
       }
 
       setLoading(false);
       router.replace('/');
       return;
     }
+
+    // Email confirmation is required — the code gets redeemed once they confirm
+    // and sign in for the first time (handled in auth-context).
+    await setPendingInvite({ code, fullName: fullName.trim() });
 
     setLoading(false);
     setCheckEmailMessage(
@@ -77,6 +97,7 @@ export default function SignUpScreen() {
 
   const canSubmit =
     fullName.trim().length > 0 &&
+    inviteCode.trim().length > 0 &&
     email.trim().length > 0 &&
     password.length > 0 &&
     confirmPassword.length > 0 &&
@@ -92,7 +113,7 @@ export default function SignUpScreen() {
             Staff Sign Up
           </ThemedText>
           <ThemedText themeColor="textSecondary" style={styles.subtitle}>
-            Create a staff account to check children in and out.
+            You'll need an invite code from an admin to create a staff account.
           </ThemedText>
 
           {checkEmailMessage ? (
@@ -106,6 +127,17 @@ export default function SignUpScreen() {
                 placeholderTextColor={theme.textSecondary}
                 autoComplete="name"
                 textContentType="name"
+                style={[
+                  styles.input,
+                  { color: theme.text, backgroundColor: theme.backgroundElement },
+                ]}
+              />
+              <TextInput
+                value={inviteCode}
+                onChangeText={setInviteCode}
+                placeholder="Invite Code"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="characters"
                 style={[
                   styles.input,
                   { color: theme.text, backgroundColor: theme.backgroundElement },

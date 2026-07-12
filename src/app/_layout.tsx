@@ -11,7 +11,7 @@ import { maybePromoteChildren } from '@/lib/grade-promotion';
 SplashScreen.preventAutoHideAsync();
 
 function AuthGate() {
-  const { session, loading, locked } = useAuth();
+  const { session, loading, locked, staffRowMissing } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -20,7 +20,26 @@ function AuthGate() {
 
     const onAuthScreen =
       segments[0] === 'login' || segments[0] === 'signup' || segments[0] === 'pin-signin';
-    const authed = session && !locked;
+    const onAccountPending = segments[0] === 'account-pending';
+    const authed = session && !locked && !staffRowMissing;
+    // A valid Supabase session but no matching staff row (e.g. an invite code was
+    // never redeemed) — block them from the kiosk instead of treating them as staff.
+    const blocked = session && !locked && staffRowMissing;
+
+    if (blocked) {
+      if (!onAccountPending) {
+        if (router.canDismiss()) router.dismissAll();
+        router.replace('/account-pending');
+      }
+      return;
+    }
+
+    if (onAccountPending) {
+      if (router.canDismiss()) router.dismissAll();
+      router.replace(authed ? '/' : '/login');
+      return;
+    }
+
     if (!authed && !onAuthScreen) {
       // Clear any stacked modals (parent-signin, admin, etc.) before redirecting so
       // we don't leave stale screens sitting underneath the login modal.
@@ -32,7 +51,7 @@ function AuthGate() {
       if (router.canDismiss()) router.dismissAll();
       router.replace('/');
     }
-  }, [session, locked, loading, segments, router]);
+  }, [session, locked, staffRowMissing, loading, segments, router]);
 
   useEffect(() => {
     if (session) {
@@ -55,6 +74,8 @@ export default function RootLayout() {
           <Stack.Screen name="signup" options={{ presentation: 'modal' }} />
           <Stack.Screen name="pin-signin" options={{ presentation: 'modal' }} />
           <Stack.Screen name="setup-pin" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="admin-pin" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="account-pending" options={{ presentation: 'modal' }} />
           <Stack.Screen name="parent-signin" options={{ presentation: 'modal' }} />
           <Stack.Screen name="admin" options={{ presentation: 'modal' }} />
         </Stack>

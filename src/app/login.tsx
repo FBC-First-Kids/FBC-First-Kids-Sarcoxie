@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,7 +16,6 @@ import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth-context';
-import { getPinProfiles } from '@/lib/pin-auth';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginScreen() {
@@ -27,11 +26,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasPinProfiles, setHasPinProfiles] = useState(false);
-
-  useEffect(() => {
-    getPinProfiles().then((profiles) => setHasPinProfiles(profiles.length > 0));
-  }, []);
 
   async function handleSignIn() {
     setError(null);
@@ -122,11 +116,9 @@ export default function LoginScreen() {
               </ThemedText>
             </Pressable>
 
-            {hasPinProfiles && (
-              <Pressable onPress={() => router.push('/pin-signin')} style={styles.signupLink}>
-                <ThemedText type="link">Use PIN Instead</ThemedText>
-              </Pressable>
-            )}
+            <Pressable onPress={() => router.push('/pin-signin')} style={styles.signupLink}>
+              <ThemedText type="link">Use PIN Instead</ThemedText>
+            </Pressable>
           </ThemedView>
         </SafeAreaView>
       </KeyboardAvoidingView>

@@ -15,11 +15,14 @@ const TABS = [
   { href: '/admin/manage-profiles', label: 'Manage Profiles' },
 ] as const;
 
+const MAIN_ADMIN_TAB = { href: '/admin/admins', label: 'Admins' } as const;
+
 export function AdminChrome() {
   const theme = useTheme();
   const router = useRouter();
   const pathname = usePathname();
-  const { session, staffName, lock } = useAuth();
+  const { session, staffName, isMainAdmin, lock } = useAuth();
+  const tabs = isMainAdmin ? [...TABS, MAIN_ADMIN_TAB] : TABS;
 
   return (
     <ThemedView style={styles.wrapper}>
@@ -42,7 +45,7 @@ export function AdminChrome() {
       </ThemedView>
 
       <ThemedView style={styles.tabRow}>
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = pathname === tab.href;
           return (
             <Pressable

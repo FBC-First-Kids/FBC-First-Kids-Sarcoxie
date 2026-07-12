@@ -137,7 +137,6 @@ export default function ParentSignInScreen() {
 
   const [pendingNotifications, setPendingNotifications] = useState<NotificationItem[]>([]);
   const [notificationGuardianIds, setNotificationGuardianIds] = useState<string[]>([]);
-  const [pendingAction, setPendingAction] = useState<CheckinAction | null>(null);
 
   function reset() {
     setMode('lookup');
@@ -155,23 +154,22 @@ export default function ParentSignInScreen() {
     setCreateError(null);
     setPendingNotifications([]);
     setNotificationGuardianIds([]);
-    setPendingAction(null);
   }
 
-  async function fetchNotificationsForAction(
+  // Shown right after the family is identified (lookup or new account) and before
+  // they pick who to sign in/out, so the action isn't known yet — notifications
+  // scoped to either sign-in or sign-out are shown together at this one point.
+  async function fetchNotificationsForFamily(
     guardianIds: string[],
-    action: CheckinAction,
     classGroups: string[],
   ): Promise<NotificationItem[]> {
-    const showOnValue = action === 'checked_in' ? 'sign_in' : 'sign_out';
     const todayStr = new Date().toISOString().slice(0, 10);
 
     const { data: activeNotifications, error } = await supabase
       .from('notifications')
       .select('id, title, message, is_reminder, show_on, class_groups')
       .lte('start_date', todayStr)
-      .or(`end_date.is.null,end_date.gte.${todayStr}`)
-      .or(`show_on.eq.both,show_on.eq.${showOnValue}`);
+      .or(`end_date.is.null,end_date.gte.${todayStr}`);
 
     if (error || !activeNotifications) {
       if (error) console.error('notifications lookup failed', error);
@@ -222,14 +220,7 @@ export default function ParentSignInScreen() {
       console.error('notification read upsert failed', error);
     }
 
-    const remaining = pendingNotifications.slice(1);
-    setPendingNotifications(remaining);
-
-    if (remaining.length === 0 && pendingAction) {
-      const action = pendingAction;
-      setPendingAction(null);
-      await performCheckinAction(action);
-    }
+    setPendingNotifications((prev) => prev.slice(1));
   }
 
   async function handleLookup() {
@@ -306,10 +297,16 @@ export default function ParentSignInScreen() {
       classGroup: c.class_group,
     }));
 
+    const classGroups = [
+      ...new Set(resolvedChildren.map((c) => c.classGroup).filter((cg): cg is string => !!cg)),
+    ];
+    const notifs = await fetchNotificationsForFamily(matchedGuardianIds, classGroups);
+
     setChildren(resolvedChildren);
     setOpenCheckinByChild(new Map((openCheckins ?? []).map((r) => [r.child_id, r.id])));
     setSelectedIds(new Set(resolvedChildren.map((c) => c.id)));
     setNotificationGuardianIds(matchedGuardianIds);
+    setPendingNotifications(notifs);
     setLookingUp(false);
   }
 
@@ -543,10 +540,16 @@ export default function ParentSignInScreen() {
       classGroup: c.class_group,
     }));
 
+    const classGroups = [
+      ...new Set(resolvedChildren.map((c) => c.classGroup).filter((cg): cg is string => !!cg)),
+    ];
+    const notifs = await fetchNotificationsForFamily([guardian.id], classGroups);
+
     setChildren(resolvedChildren);
     setOpenCheckinByChild(new Map());
     setSelectedIds(new Set(resolvedChildren.map((c) => c.id)));
     setNotificationGuardianIds([guardian.id]);
+    setPendingNotifications(notifs);
     setCreating(false);
     setMode('lookup');
   }
@@ -561,34 +564,6 @@ export default function ParentSignInScreen() {
       }
       return next;
     });
-  }
-
-  async function handleSubmit(action: CheckinAction) {
-    if (!children || selectedIds.size === 0) return;
-
-    setSubmitting(action);
-    const selectedClassGroups = [
-      ...new Set(
-        children
-          .filter((c) => selectedIds.has(c.id))
-          .map((c) => c.classGroup)
-          .filter((cg): cg is string => !!cg),
-      ),
-    ];
-    const notifs = await fetchNotificationsForAction(
-      notificationGuardianIds,
-      action,
-      selectedClassGroups,
-    );
-
-    if (notifs.length > 0) {
-      setPendingNotifications(notifs);
-      setPendingAction(action);
-      setSubmitting(null);
-      return;
-    }
-
-    await performCheckinAction(action);
   }
 
   async function performCheckinAction(action: CheckinAction) {
@@ -994,7 +969,7 @@ export default function ParentSignInScreen() {
 
             <ThemedView style={styles.actionsRow}>
               <Pressable
-                onPress={() => handleSubmit('checked_in')}
+                onPress={() => performCheckinAction('checked_in')}
                 disabled={submitting !== null || selectedIds.size === 0}
                 style={({ pressed }) => [
                   styles.button,
@@ -1013,7 +988,7 @@ export default function ParentSignInScreen() {
                 )}
               </Pressable>
               <Pressable
-                onPress={() => handleSubmit('checked_out')}
+                onPress={() => performCheckinAction('checked_out')}
                 disabled={submitting !== null || selectedIds.size === 0}
                 style={({ pressed }) => [
                   styles.button,

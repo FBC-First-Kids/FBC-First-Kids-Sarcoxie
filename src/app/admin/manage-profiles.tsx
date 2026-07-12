@@ -15,7 +15,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { classGroupForGrade, GRADE_OPTIONS, gradeLabel } from '@/lib/class-groups';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { deleteChildCascade } from '@/lib/child-actions';
+import { deleteChildCascade, deleteGuardianCascade } from '@/lib/child-actions';
 import { formatPhoneInput } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
@@ -213,34 +213,9 @@ export default function AdminManageProfilesScreen() {
     setActionError(null);
     setDeletingId(guardianId);
 
-    const { error: readsError } = await supabase
-      .from('notification_reads')
-      .delete()
-      .eq('guardian_id', guardianId);
-    if (readsError) {
-      console.error('notification_reads delete failed', readsError);
+    const { error } = await deleteGuardianCascade(guardianId);
+    if (error) {
       setActionError('Something went wrong deleting that parent.');
-      setDeletingId(null);
-      return;
-    }
-
-    const { error: linksError } = await supabase
-      .from('child_guardians')
-      .delete()
-      .eq('guardian_id', guardianId);
-    if (linksError) {
-      console.error('child_guardians delete failed', linksError);
-      setActionError('Something went wrong deleting that parent.');
-      setDeletingId(null);
-      return;
-    }
-
-    const { error: guardianError } = await supabase.from('guardians').delete().eq('id', guardianId);
-    if (guardianError) {
-      console.error('guardian delete failed', guardianError);
-      setActionError(
-        'Something went wrong deleting that parent. If they have check-in history, that may need to be cleared first.',
-      );
       setDeletingId(null);
       return;
     }
