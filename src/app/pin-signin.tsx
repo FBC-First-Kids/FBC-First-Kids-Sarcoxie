@@ -118,9 +118,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: Spacing.three,
   },
-  centerText: {
-    textAlign: 'center',
-  },
   form: {
     gap: Spacing.three,
   },

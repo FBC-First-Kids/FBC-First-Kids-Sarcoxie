@@ -7,6 +7,7 @@ import { useColorScheme } from 'react-native';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/lib/auth-context';
 import { maybePromoteChildren } from '@/lib/grade-promotion';
+import { clearLegacyPinData } from '@/lib/pin-auth';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -14,6 +15,10 @@ function AuthGate() {
   const { session, loading, staffRowMissing } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  useEffect(() => {
+    clearLegacyPinData();
+  }, []);
 
   useEffect(() => {
     if (loading) return;

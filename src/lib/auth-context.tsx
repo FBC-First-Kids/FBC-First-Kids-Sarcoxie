@@ -1,5 +1,5 @@
 import type { Session } from '@supabase/supabase-js';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { supabase } from '@/lib/supabase';
 import { clearPendingInvite, getPendingInvite, redeemInvite } from '@/lib/staff-invites';
@@ -40,7 +40,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // session itself to change — used to pick up role changes (e.g. just-run SQL
   // promotions) without requiring a full sign-out/sign-in.
   const [staffRefreshKey, setStaffRefreshKey] = useState(0);
-  const refreshStaffInfo = () => setStaffRefreshKey((k) => k + 1);
+  // Memoized with a stable identity — several effects elsewhere key off these
+  // functions in their dependency arrays (e.g. admin/_layout.tsx's re-lock-on-
+  // unmount effect). A fresh function reference on every AuthProvider render
+  // would make React treat that as a dependency change and fire the effect's
+  // cleanup immediately, even though nothing meaningful changed.
+  const refreshStaffInfo = useCallback(() => setStaffRefreshKey((k) => k + 1), []);
   // Re-confirms it's really staff (not a parent/child at the kiosk) before showing
   // admin data. Resets whenever the admin section is left, so it's re-checked each visit.
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -115,14 +120,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [session, staffRefreshKey]);
 
-  const signOut = () => {
+  const signOut = useCallback(() => {
     setAdminUnlocked(false);
     supabase.auth.signOut({ scope: 'local' }).catch((err) => {
       console.error('sign out failed', err);
     });
-  };
-  const unlockAdmin = () => setAdminUnlocked(true);
-  const relockAdmin = () => setAdminUnlocked(false);
+  }, []);
+  const unlockAdmin = useCallback(() => setAdminUnlocked(true), []);
+  const relockAdmin = useCallback(() => setAdminUnlocked(false), []);
 
   return (
     <AuthContext.Provider
