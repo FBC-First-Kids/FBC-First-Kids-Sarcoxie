@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +15,7 @@ import { ThemedView } from '@/components/themed-view';
 import { classGroupForGrade, GRADE_OPTIONS, gradeLabel } from '@/lib/class-groups';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { deleteChildCascade, deleteGuardianCascade } from '@/lib/child-actions';
+import { confirmAction } from '@/lib/confirm';
 import { formatPhoneInput } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
@@ -173,24 +173,20 @@ export default function AdminManageProfilesScreen() {
   }
 
   function confirmDeleteChild(child: ChildRow) {
-    Alert.alert(
+    confirmAction(
       'Delete Child Profile',
       `Delete ${child.full_name}? This also permanently deletes their check-in history. This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteChild(child.id) },
-      ],
+      'Delete',
+      () => deleteChild(child.id),
     );
   }
 
   function confirmDeleteGuardian(guardian: GuardianRow) {
-    Alert.alert(
+    confirmAction(
       'Delete Parent Profile',
       `Delete ${guardian.full_name}? This removes them as a guardian from any children they're linked to. This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteGuardian(guardian.id) },
-      ],
+      'Delete',
+      () => deleteGuardian(guardian.id),
     );
   }
 

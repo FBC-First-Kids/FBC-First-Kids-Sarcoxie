@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdminChrome } from '@/components/admin-chrome';
@@ -7,6 +7,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { STAFF_POSITION_OPTIONS, staffPositionLabel } from '@/lib/class-groups';
+import { confirmAction } from '@/lib/confirm';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
@@ -24,7 +25,6 @@ function generateInviteCode() {
 type StaffRow = {
   id: string;
   full_name: string;
-  role: 'staff' | 'main_admin';
   position: string | null;
 };
 
@@ -63,7 +63,11 @@ export default function AdminStaffScreen() {
 
     const [{ data: staffRows, error: staffError }, { data: inviteRows, error: inviteError }] =
       await Promise.all([
-        supabase.from('staff').select('id, full_name, role, position').order('full_name'),
+        // Main admins are managed exclusively from Manage Admins (demote there
+        // first) — keeps a main admin from being deleted outright by mistake,
+        // and keeps each person's "where do I manage this person" story in one
+        // place instead of two.
+        supabase.from('staff').select('id, full_name, position').eq('role', 'staff').order('full_name'),
         // Both pending AND used codes — a used code's Revoke button previously had
         // nothing to act on, since this query used to filter used ones out entirely.
         supabase
@@ -85,13 +89,11 @@ export default function AdminStaffScreen() {
   }
 
   function confirmRemoveStaff(row: StaffRow) {
-    Alert.alert(
+    confirmAction(
       'Remove Staff',
       `Remove ${row.full_name}? They will no longer be able to sign in to this app.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => handleRemoveStaff(row.id) },
-      ],
+      'Remove',
+      () => handleRemoveStaff(row.id),
     );
   }
 
@@ -136,17 +138,12 @@ export default function AdminStaffScreen() {
   }
 
   function confirmRevokeInvite(invite: InviteRow) {
-    Alert.alert(
+    const label = invite.used_at ? 'Delete' : 'Revoke';
+    confirmAction(
       invite.used_at ? 'Delete Used Code' : 'Revoke Invite Code',
-      `${invite.used_at ? 'Delete' : 'Revoke'} code ${invite.code}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: invite.used_at ? 'Delete' : 'Revoke',
-          style: 'destructive',
-          onPress: () => handleRevokeInvite(invite.id),
-        },
-      ],
+      `${label} code ${invite.code}?`,
+      label,
+      () => handleRevokeInvite(invite.id),
     );
   }
 
@@ -191,14 +188,22 @@ export default function AdminStaffScreen() {
               <ThemedText type="smallBold" style={styles.sectionLabel}>
                 Staff
               </ThemedText>
+              <ThemedText themeColor="textSecondary" type="small">
+                Main admins are managed from the Manage Admins tab instead — demote someone there
+                first if you need to remove them entirely.
+              </ThemedText>
               <ThemedView style={styles.list}>
-                {staff.map((row) => (
+                {staff.length === 0 ? (
+                  <ThemedText themeColor="textSecondary" type="small" style={styles.centerText}>
+                    No staff yet.
+                  </ThemedText>
+                ) : (
+                  staff.map((row) => (
                   <ThemedView key={row.id} type="backgroundElement" style={styles.row}>
                     <View style={styles.rowInfo}>
                       <ThemedText style={styles.rowName}>{row.full_name}</ThemedText>
                       <ThemedText themeColor="textSecondary" type="small">
-                        {row.role === 'main_admin' ? 'Main Admin' : 'Staff'}
-                        {row.position ? ` · ${staffPositionLabel(row.position)}` : ''}
+                        {row.position ? staffPositionLabel(row.position) : 'No position set'}
                       </ThemedText>
                     </View>
                     {busyId === row.id ? (
@@ -209,7 +214,8 @@ export default function AdminStaffScreen() {
                       </Pressable>
                     )}
                   </ThemedView>
-                ))}
+                  ))
+                )}
               </ThemedView>
 
               <ThemedText type="smallBold" style={styles.sectionLabel}>
