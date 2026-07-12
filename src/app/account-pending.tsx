@@ -1,23 +1,15 @@
-import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
-import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth-context';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function AccountPendingScreen() {
   const theme = useTheme();
-  const router = useRouter();
-
-  // A real sign-out (not the local PIN-preserving lock) — this account has no staff
-  // row, so there's nothing valid to keep a Quick PIN session alive for.
-  async function handleSignOut() {
-    await supabase.auth.signOut({ scope: 'local' });
-    router.replace('/login');
-  }
+  const { signOut } = useAuth();
 
   return (
     <ThemedView style={styles.container}>
@@ -30,7 +22,7 @@ export default function AccountPendingScreen() {
           used a valid invite code from an admin. Otherwise, please ask a main admin for help.
         </ThemedText>
         <Pressable
-          onPress={handleSignOut}
+          onPress={signOut}
           style={({ pressed }) => [
             styles.button,
             { backgroundColor: theme.text, opacity: pressed ? 0.7 : 1 },

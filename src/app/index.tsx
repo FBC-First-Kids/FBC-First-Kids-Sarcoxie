@@ -12,7 +12,7 @@ import { useTheme } from '@/hooks/use-theme';
 export default function KioskHomeScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { session, staffName, lock } = useAuth();
+  const { session, staffName, signOut } = useAuth();
 
   return (
     <ThemedView style={styles.container}>
@@ -27,7 +27,7 @@ export default function KioskHomeScreen() {
                 Set Up Quick PIN
               </ThemedText>
             </Pressable>
-            <Pressable onPress={lock}>
+            <Pressable onPress={signOut}>
               <ThemedText type="link" themeColor="textSecondary">
                 Sign Out
               </ThemedText>

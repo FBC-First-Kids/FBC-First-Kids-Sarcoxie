@@ -50,7 +50,9 @@
       "PowerShell(Get-NetTCPConnection -LocalPort 8092 -ErrorAction SilentlyContinue)",
       "PowerShell(Stop-Process -Id 21032 -Force -ErrorAction SilentlyContinue)",
       "PowerShell('stopped')",
-      "PowerShell(Get-NetTCPConnection -LocalPort 8093,8094 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')"
+      "PowerShell(Get-NetTCPConnection -LocalPort 8093,8094 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')",
+      "Bash(npx supabase *)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8095 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; 'done')"
     ]
   }
 }

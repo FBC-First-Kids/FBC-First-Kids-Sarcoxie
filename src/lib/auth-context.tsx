@@ -2,7 +2,6 @@ import type { Session } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { supabase } from '@/lib/supabase';
-import { updatePinProfileToken } from '@/lib/pin-auth';
 import { clearPendingInvite, getPendingInvite, redeemInvite } from '@/lib/staff-invites';
 
 type AuthContextValue = {
@@ -11,9 +10,8 @@ type AuthContextValue = {
   staffName: string | null;
   isMainAdmin: boolean;
   staffRowMissing: boolean;
-  locked: boolean;
-  lock: () => void;
-  unlock: () => void;
+  refreshStaffInfo: () => void;
+  signOut: () => void;
   adminUnlocked: boolean;
   unlockAdmin: () => void;
   relockAdmin: () => void;
@@ -25,9 +23,8 @@ const AuthContext = createContext<AuthContextValue>({
   staffName: null,
   isMainAdmin: false,
   staffRowMissing: false,
-  locked: false,
-  lock: () => {},
-  unlock: () => {},
+  refreshStaffInfo: () => {},
+  signOut: () => {},
   adminUnlocked: false,
   unlockAdmin: () => {},
   relockAdmin: () => {},
@@ -39,10 +36,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [staffName, setStaffName] = useState<string | null>(null);
   const [isMainAdmin, setIsMainAdmin] = useState(false);
   const [staffRowMissing, setStaffRowMissing] = useState(false);
-  // Local-only "signed out" view. Deliberately does NOT call supabase.auth.signOut(),
-  // which revokes the session's refresh token server-side even with scope 'local' —
-  // that would break Quick PIN sign-in, which depends on that token staying valid.
-  const [locked, setLocked] = useState(false);
+  // Bumping this forces the staff-row effect below to re-run without needing the
+  // session itself to change — used to pick up role changes (e.g. just-run SQL
+  // promotions) without requiring a full sign-out/sign-in.
+  const [staffRefreshKey, setStaffRefreshKey] = useState(0);
+  const refreshStaffInfo = () => setStaffRefreshKey((k) => k + 1);
   // Re-confirms it's really staff (not a parent/child at the kiosk) before showing
   // admin data. Resets whenever the admin section is left, so it's re-checked each visit.
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -56,15 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       setLoading(false);
-
-      // Supabase rotates the refresh token on every background refresh, which
-      // invalidates whatever was stored at PIN setup time. Keep it in sync here
-      // so Quick PIN sign-in always has a currently-valid token.
-      if (newSession?.user.email && newSession.refresh_token) {
-        updatePinProfileToken(newSession.user.email, newSession.refresh_token).catch((err) => {
-          console.error('pin-auth: failed to sync refreshed token', err);
-        });
-      }
     });
 
     return () => subscription.subscription.unsubscribe();
@@ -124,13 +113,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [session, staffRefreshKey]);
 
-  const lock = () => {
-    setLocked(true);
+  const signOut = () => {
     setAdminUnlocked(false);
+    supabase.auth.signOut({ scope: 'local' }).catch((err) => {
+      console.error('sign out failed', err);
+    });
   };
-  const unlock = () => setLocked(false);
   const unlockAdmin = () => setAdminUnlocked(true);
   const relockAdmin = () => setAdminUnlocked(false);
 
@@ -142,9 +132,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         staffName,
         isMainAdmin,
         staffRowMissing,
-        locked,
-        lock,
-        unlock,
+        refreshStaffInfo,
+        signOut,
         adminUnlocked,
         unlockAdmin,
         relockAdmin,

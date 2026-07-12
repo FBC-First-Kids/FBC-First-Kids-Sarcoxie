@@ -7,13 +7,13 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
-import { savePinProfile } from '@/lib/pin-auth';
+import { setStaffPin } from '@/lib/pin-auth';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function SetupPinScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { session, staffName } = useAuth();
+  const { session } = useAuth();
 
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -32,30 +32,19 @@ export default function SetupPinScreen() {
       setError('PINs do not match.');
       return;
     }
-    if (!session?.user.email || !session.refresh_token) {
+    if (!session) {
       setError('Something went wrong. Please sign in again.');
       return;
     }
 
     setSaving(true);
-    try {
-      const saved = await savePinProfile({
-        email: session.user.email,
-        staffName: staffName ?? session.user.email,
-        pin,
-        refreshToken: session.refresh_token,
-      });
-      if (saved) {
-        setSuccess(true);
-      } else {
-        setError('Your PIN did not save correctly. Please try again.');
-      }
-    } catch (err) {
-      console.error('save pin profile failed', err);
+    const { error: saveError } = await setStaffPin(pin);
+    if (saveError) {
       setError('Something went wrong saving your PIN.');
-    } finally {
-      setSaving(false);
+    } else {
+      setSuccess(true);
     }
+    setSaving(false);
   }
 
   return (
@@ -71,13 +60,13 @@ export default function SetupPinScreen() {
           Quick PIN Sign-In
         </ThemedText>
         <ThemedText themeColor="textSecondary" style={styles.subtitle}>
-          Set a 4-digit PIN to sign in faster on this iPad next time.
+          Set a 4-digit PIN to sign in faster next time, on any device.
         </ThemedText>
 
         {success ? (
           <ThemedView style={styles.centerFill}>
             <ThemedText type="subtitle" style={styles.centerText}>
-              PIN set up! You can use it next time you sign in on this device.
+              PIN set up! You can use it to sign in quickly from now on.
             </ThemedText>
           </ThemedView>
         ) : (

@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -7,33 +7,30 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
-import { getPinProfiles, type PinProfile } from '@/lib/pin-auth';
+import { verifyOwnPin } from '@/lib/pin-auth';
 import { useTheme } from '@/hooks/use-theme';
 
 export default function AdminPinScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { session, unlockAdmin } = useAuth();
+  const { unlockAdmin } = useAuth();
 
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<PinProfile | null>(null);
   const [pin, setPin] = useState('');
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    getPinProfiles().then((profiles) => {
-      setProfile(profiles.find((p) => p.email === session?.user.email) ?? null);
-      setLoading(false);
-    });
-  }, [session?.user.email]);
-
-  function handlePinChange(value: string) {
+  async function handlePinChange(value: string) {
     const digits = value.replace(/\D/g, '').slice(0, 4);
     setPin(digits);
 
     if (digits.length === 4) {
-      if (profile && digits === profile.pin) {
-        setError(null);
+      setChecking(true);
+      setError(null);
+
+      const valid = await verifyOwnPin(digits);
+      setChecking(false);
+
+      if (valid) {
         unlockAdmin();
         router.replace('/admin');
       } else {
@@ -50,46 +47,31 @@ export default function AdminPinScreen() {
           Admin Access
         </ThemedText>
 
-        {loading ? (
-          <ActivityIndicator color={theme.text} style={styles.centerFill} />
-        ) : profile ? (
-          <ThemedView style={styles.form}>
-            <ThemedText themeColor="textSecondary" style={styles.centerText}>
-              Enter your PIN to continue.
+        <ThemedView style={styles.form}>
+          <ThemedText themeColor="textSecondary" style={styles.centerText}>
+            Enter your PIN to continue.
+          </ThemedText>
+          <TextInput
+            value={pin}
+            onChangeText={handlePinChange}
+            placeholder="Enter PIN"
+            placeholderTextColor={theme.textSecondary}
+            keyboardType="number-pad"
+            secureTextEntry
+            maxLength={4}
+            autoFocus
+            editable={!checking}
+            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+          />
+          {checking && <ActivityIndicator color={theme.text} />}
+          {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+
+          <Pressable onPress={() => router.replace('/setup-pin')} style={styles.setupLink}>
+            <ThemedText type="link" themeColor="textSecondary">
+              Haven't set up a PIN yet? Set Up Quick PIN
             </ThemedText>
-            <TextInput
-              value={pin}
-              onChangeText={handlePinChange}
-              placeholder="Enter PIN"
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="number-pad"
-              secureTextEntry
-              maxLength={4}
-              autoFocus
-              style={[
-                styles.input,
-                { color: theme.text, backgroundColor: theme.backgroundElement },
-              ]}
-            />
-            {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-          </ThemedView>
-        ) : (
-          <ThemedView style={styles.form}>
-            <ThemedText themeColor="textSecondary" style={styles.centerText}>
-              You need a Quick PIN set up on this device before you can access Admin.
-            </ThemedText>
-            <Pressable
-              onPress={() => router.replace('/setup-pin')}
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: theme.text, opacity: pressed ? 0.7 : 1 },
-              ]}>
-              <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                Set Up Quick PIN
-              </ThemedText>
-            </Pressable>
-          </ThemedView>
-        )}
+          </Pressable>
+        </ThemedView>
 
         <Pressable onPress={() => router.replace('/')} style={styles.cancelLink}>
           <ThemedText type="link" themeColor="textSecondary">
@@ -118,10 +100,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: Spacing.three,
   },
-  centerFill: {
-    flex: 1,
-    justifyContent: 'center',
-  },
   centerText: {
     textAlign: 'center',
   },
@@ -140,14 +118,9 @@ const styles = StyleSheet.create({
     color: '#D0342C',
     textAlign: 'center',
   },
-  button: {
-    height: 48,
-    borderRadius: Spacing.two,
+  setupLink: {
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonText: {
-    fontWeight: '600',
+    marginTop: Spacing.two,
   },
   cancelLink: {
     alignItems: 'center',

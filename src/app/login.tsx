@@ -15,13 +15,11 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { unlock } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,7 +38,6 @@ export default function LoginScreen() {
       setError(signInError.message);
       return;
     }
-    unlock();
     router.replace('/');
   }
 

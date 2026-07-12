@@ -11,7 +11,7 @@ import { maybePromoteChildren } from '@/lib/grade-promotion';
 SplashScreen.preventAutoHideAsync();
 
 function AuthGate() {
-  const { session, loading, locked, staffRowMissing } = useAuth();
+  const { session, loading, staffRowMissing } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -21,10 +21,10 @@ function AuthGate() {
     const onAuthScreen =
       segments[0] === 'login' || segments[0] === 'signup' || segments[0] === 'pin-signin';
     const onAccountPending = segments[0] === 'account-pending';
-    const authed = session && !locked && !staffRowMissing;
+    const authed = session && !staffRowMissing;
     // A valid Supabase session but no matching staff row (e.g. an invite code was
     // never redeemed) — block them from the kiosk instead of treating them as staff.
-    const blocked = session && !locked && staffRowMissing;
+    const blocked = session && staffRowMissing;
 
     if (blocked) {
       if (!onAccountPending) {
@@ -51,7 +51,7 @@ function AuthGate() {
       if (router.canDismiss()) router.dismissAll();
       router.replace('/');
     }
-  }, [session, locked, staffRowMissing, loading, segments, router]);
+  }, [session, staffRowMissing, loading, segments, router]);
 
   useEffect(() => {
     if (session) {

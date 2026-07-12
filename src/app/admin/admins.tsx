@@ -197,7 +197,7 @@ export default function AdminAdminsScreen() {
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <ThemedText type="title" style={styles.title}>
-            Admins
+            Manage Admins
           </ThemedText>
 
           {actionError && <ThemedText style={styles.error}>{actionError}</ThemedText>}

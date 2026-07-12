@@ -15,13 +15,13 @@ const TABS = [
   { href: '/admin/manage-profiles', label: 'Manage Profiles' },
 ] as const;
 
-const MAIN_ADMIN_TAB = { href: '/admin/admins', label: 'Admins' } as const;
+const MAIN_ADMIN_TAB = { href: '/admin/admins', label: 'Manage Admins' } as const;
 
 export function AdminChrome() {
   const theme = useTheme();
   const router = useRouter();
   const pathname = usePathname();
-  const { session, staffName, isMainAdmin, lock } = useAuth();
+  const { session, staffName, isMainAdmin, signOut } = useAuth();
   const tabs = isMainAdmin ? [...TABS, MAIN_ADMIN_TAB] : TABS;
 
   return (
@@ -36,7 +36,7 @@ export function AdminChrome() {
               Back to Kiosk
             </ThemedText>
           </Pressable>
-          <Pressable onPress={lock}>
+          <Pressable onPress={signOut}>
             <ThemedText type="link" themeColor="textSecondary">
               Sign Out
             </ThemedText>
