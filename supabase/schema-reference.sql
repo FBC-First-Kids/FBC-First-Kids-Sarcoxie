@@ -54,11 +54,29 @@ alter table staff_invites add column if not exists position text
 alter table staff_invites add column if not exists role text not null default 'staff'
   check (role in ('staff', 'main_admin'));
 
--- The plain `code text ... unique` constraint above is case-sensitive, but
--- check_invite_code/redeem_staff_invite match case-insensitively (upper(code)
--- = upper(p_code)) — without this, "FBCPREK" and "fbcprek" could both exist
--- as separate rows and redemption would pick one arbitrarily.
-create unique index if not exists staff_invites_code_upper_idx on staff_invites (upper(code));
+-- Collapses visually-ambiguous characters (I/l -> 1, O -> 0) on top of
+-- uppercasing, so a code containing them still matches no matter which
+-- look-alike character someone actually types back — e.g. "FBCADMIN1"
+-- (letter I in ADMIN, digit 1 at the end) normalizes the same as
+-- "FBCADM1Nl" or any other mix, instead of silently failing to match.
+-- A real invite (FBCADMIN1) went unredeemed for this exact reason: the
+-- creator and the redeemer typed visually-identical-looking but different
+-- characters, and the old plain upper() comparison never matched.
+create or replace function normalize_invite_code(p_code text)
+returns text
+language sql
+immutable
+as $$
+  select regexp_replace(regexp_replace(upper(p_code), '[IL]', '1', 'g'), 'O', '0', 'g');
+$$;
+
+-- Replaces the old case-insensitive-only unique index — normalize_invite_code
+-- also folds in the ambiguous-character collapsing above, so two codes that
+-- would be indistinguishable to a person (e.g. "FBCADMIN1" and "FBCADMINI")
+-- can't both exist as separate, conflicting rows.
+drop index if exists staff_invites_code_upper_idx;
+create unique index if not exists staff_invites_code_normalized_idx
+  on staff_invites (normalize_invite_code(code));
 
 create or replace function is_main_admin()
 returns boolean
@@ -183,7 +201,8 @@ set search_path = public
 as $$
   select exists (
     select 1 from staff_invites
-    where upper(code) = upper(p_code) and (expires_at is null or expires_at > now())
+    where normalize_invite_code(code) = normalize_invite_code(p_code)
+      and (expires_at is null or expires_at > now())
   );
 $$;
 grant execute on function check_invite_code(text) to anon, authenticated;
@@ -204,7 +223,8 @@ begin
   end if;
 
   select id, position, role into invite_id, invite_position, invite_role from staff_invites
-    where upper(code) = upper(p_code) and (expires_at is null or expires_at > now())
+    where normalize_invite_code(code) = normalize_invite_code(p_code)
+      and (expires_at is null or expires_at > now())
     limit 1;
 
   if invite_id is null then

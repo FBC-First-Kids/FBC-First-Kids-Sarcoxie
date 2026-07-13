@@ -8,8 +8,25 @@ import { AdminChrome } from '@/components/admin-chrome';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { CLASS_GROUP_OPTIONS, classGroupForGrade, classGroupLabel } from '@/lib/class-groups';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
+
+const CLASS_GROUP_ORDER = CLASS_GROUP_OPTIONS.map((o) => o.value);
+const NO_CLASS_KEY = '__no_class__';
+
+function classSortIndex(key: string) {
+  const index = CLASS_GROUP_ORDER.indexOf(key as (typeof CLASS_GROUP_ORDER)[number]);
+  return index === -1 ? CLASS_GROUP_ORDER.length : index;
+}
+
+// Children only ever have one full_name field (no separate last name), so
+// last name is just the final whitespace-separated word — used for sorting
+// only, never displayed differently.
+function lastNameOf(fullName: string) {
+  const parts = fullName.trim().split(/\s+/);
+  return parts[parts.length - 1] ?? fullName;
+}
 
 type CheckinRow = {
   id: string;
@@ -33,6 +50,7 @@ export default function AdminHistoryScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [checkins, setCheckins] = useState<CheckinRow[]>([]);
   const [childNames, setChildNames] = useState<Map<string, string>>(new Map());
+  const [childGrades, setChildGrades] = useState<Map<string, string | null>>(new Map());
   const [guardianNames, setGuardianNames] = useState<Map<string, string>>(new Map());
   const [staffNames, setStaffNames] = useState<Map<string, string>>(new Map());
   const [notificationReadsByGuardian, setNotificationReadsByGuardian] = useState<
@@ -83,7 +101,7 @@ export default function AdminHistoryScreen() {
       { data: guardianRows, error: guardiansError },
       { data: staffRows, error: staffError },
     ] = await Promise.all([
-      supabase.from('children').select('id, full_name').in('id', childIds),
+      supabase.from('children').select('id, full_name, grade').in('id', childIds),
       supabase.from('guardians').select('id, full_name').in('id', guardianIds),
       supabase.from('staff').select('id, full_name').in('id', staffIds),
     ]);
@@ -96,6 +114,7 @@ export default function AdminHistoryScreen() {
     }
 
     setChildNames(new Map((childRows ?? []).map((c) => [c.id, c.full_name])));
+    setChildGrades(new Map((childRows ?? []).map((c) => [c.id, c.grade])));
     setGuardianNames(new Map((guardianRows ?? []).map((g) => [g.id, g.full_name])));
     setStaffNames(new Map((staffRows ?? []).map((s) => [s.id, s.full_name])));
 
@@ -211,6 +230,30 @@ export default function AdminHistoryScreen() {
   }
   const dates = [...dateGroups.keys()];
 
+  // Group the selected date's check-ins by class, sorted alphabetically by
+  // last name within each class, and classes in Pre-K -> K-2 -> 3rd-5th ->
+  // No class order.
+  const classGroups = new Map<string, CheckinRow[]>();
+  if (selectedDate) {
+    for (const row of dateGroups.get(selectedDate) ?? []) {
+      const grade = childGrades.get(row.child_id);
+      const key = grade ? classGroupForGrade(grade) : NO_CLASS_KEY;
+      const existing = classGroups.get(key) ?? [];
+      existing.push(row);
+      classGroups.set(key, existing);
+    }
+    for (const rows of classGroups.values()) {
+      rows.sort((a, b) => {
+        const nameA = childNames.get(a.child_id) ?? '';
+        const nameB = childNames.get(b.child_id) ?? '';
+        return lastNameOf(nameA).localeCompare(lastNameOf(nameB)) || nameA.localeCompare(nameB);
+      });
+    }
+  }
+  const sortedClassKeys = [...classGroups.keys()].sort(
+    (a, b) => classSortIndex(a) - classSortIndex(b),
+  );
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -232,7 +275,9 @@ export default function AdminHistoryScreen() {
             <ThemedView style={styles.dateHeadingRow}>
               <ThemedText type="subtitle">{selectedDate}</ThemedText>
               <Pressable
-                onPress={() => exportToExcel(selectedDate, dateGroups.get(selectedDate) ?? [])}
+                onPress={() =>
+                  exportToExcel(selectedDate, sortedClassKeys.flatMap((key) => classGroups.get(key) ?? []))
+                }
                 disabled={exporting}
                 style={({ pressed }) => [styles.exportButton, { opacity: pressed || exporting ? 0.6 : 1 }]}>
                 {exporting ? (
@@ -243,54 +288,65 @@ export default function AdminHistoryScreen() {
               </Pressable>
             </ThemedView>
             {exportError && <ThemedText style={styles.error}>{exportError}</ThemedText>}
-            {(dateGroups.get(selectedDate) ?? []).map((row) => (
-              <ThemedView key={row.id} type="backgroundElement" style={styles.entryRow}>
-                <ThemedText style={styles.entryChild}>
-                  {childNames.get(row.child_id) ?? 'Unknown child'}
+            {sortedClassKeys.map((classKey) => (
+              <ThemedView key={classKey} style={styles.classGroup}>
+                <ThemedText type="smallBold" style={styles.classHeading}>
+                  {classKey === NO_CLASS_KEY ? 'No Class Set' : classGroupLabel(classKey)}
                 </ThemedText>
-                <ThemedText themeColor="textSecondary">
-                  Guardian that checked in:{' '}
-                  {row.guardian_id ? guardianNames.get(row.guardian_id) ?? 'Unknown' : '—'}
-                </ThemedText>
-                <ThemedText themeColor="textSecondary">
-                  Checked in by staff{' '}
-                  {row.checked_in_by ? staffNames.get(row.checked_in_by) ?? 'Unknown' : '—'}
-                  {row.checked_in_at ? ` at ${formatTime(row.checked_in_at)}` : ''}
-                </ThemedText>
-                <ThemedText themeColor="textSecondary" type="small">
-                  Notifications read by{' '}
-                  {row.guardian_id ? guardianNames.get(row.guardian_id) ?? 'this guardian' : 'this guardian'}:{' '}
-                  {(row.guardian_id ? notificationReadsByGuardian.get(row.guardian_id) : undefined)?.join(
-                    ', ',
-                  ) || 'None'}
-                </ThemedText>
-                {row.checked_out_at ? (
-                  <>
-                    <ThemedText themeColor="textSecondary">
-                      Guardian that checked out:{' '}
-                      {row.picked_up_by ? guardianNames.get(row.picked_up_by) ?? 'Unknown' : 'Unknown'}
+                {(classGroups.get(classKey) ?? []).map((row) => (
+                  <ThemedView key={row.id} type="backgroundElement" style={styles.entryRow}>
+                    <ThemedText style={styles.entryChild}>
+                      {childNames.get(row.child_id) ?? 'Unknown child'}
                     </ThemedText>
                     <ThemedText themeColor="textSecondary">
-                      Checked out by staff{' '}
-                      {row.checked_out_by ? staffNames.get(row.checked_out_by) ?? 'Unknown' : 'Unknown'}
-                      {' at '}
-                      {formatTime(row.checked_out_at)}
+                      Guardian that checked in:{' '}
+                      {row.guardian_id ? guardianNames.get(row.guardian_id) ?? 'Unknown' : '—'}
+                    </ThemedText>
+                    <ThemedText themeColor="textSecondary">
+                      Checked in by staff{' '}
+                      {row.checked_in_by ? staffNames.get(row.checked_in_by) ?? 'Unknown' : '—'}
+                      {row.checked_in_at ? ` at ${formatTime(row.checked_in_at)}` : ''}
                     </ThemedText>
                     <ThemedText themeColor="textSecondary" type="small">
                       Notifications read by{' '}
-                      {row.picked_up_by
-                        ? guardianNames.get(row.picked_up_by) ?? 'this guardian'
+                      {row.guardian_id
+                        ? guardianNames.get(row.guardian_id) ?? 'this guardian'
                         : 'this guardian'}
                       :{' '}
-                      {(row.picked_up_by
-                        ? notificationReadsByGuardian.get(row.picked_up_by)
+                      {(row.guardian_id
+                        ? notificationReadsByGuardian.get(row.guardian_id)
                         : undefined
                       )?.join(', ') || 'None'}
                     </ThemedText>
-                  </>
-                ) : (
-                  <ThemedText themeColor="textSecondary">Still checked in</ThemedText>
-                )}
+                    {row.checked_out_at ? (
+                      <>
+                        <ThemedText themeColor="textSecondary">
+                          Guardian that checked out:{' '}
+                          {row.picked_up_by ? guardianNames.get(row.picked_up_by) ?? 'Unknown' : 'Unknown'}
+                        </ThemedText>
+                        <ThemedText themeColor="textSecondary">
+                          Checked out by staff{' '}
+                          {row.checked_out_by ? staffNames.get(row.checked_out_by) ?? 'Unknown' : 'Unknown'}
+                          {' at '}
+                          {formatTime(row.checked_out_at)}
+                        </ThemedText>
+                        <ThemedText themeColor="textSecondary" type="small">
+                          Notifications read by{' '}
+                          {row.picked_up_by
+                            ? guardianNames.get(row.picked_up_by) ?? 'this guardian'
+                            : 'this guardian'}
+                          :{' '}
+                          {(row.picked_up_by
+                            ? notificationReadsByGuardian.get(row.picked_up_by)
+                            : undefined
+                          )?.join(', ') || 'None'}
+                        </ThemedText>
+                      </>
+                    ) : (
+                      <ThemedText themeColor="textSecondary">Still checked in</ThemedText>
+                    )}
+                  </ThemedView>
+                ))}
               </ThemedView>
             ))}
           </ScrollView>
@@ -378,6 +434,12 @@ const styles = StyleSheet.create({
   },
   exportButton: {
     paddingHorizontal: Spacing.two,
+  },
+  classGroup: {
+    gap: Spacing.two,
+  },
+  classHeading: {
+    marginTop: Spacing.two,
   },
   entryRow: {
     gap: Spacing.half,

@@ -30,6 +30,16 @@ export async function clearPendingInvite() {
   await AsyncStorage.removeItem(PENDING_INVITE_KEY);
 }
 
+// Server-side matching now collapses these to a canonical form (I/L -> 1,
+// O -> 0), so a code containing them still redeems correctly — this is just
+// a heads-up for whoever's choosing the code, since a mistyped one is still
+// annoying to troubleshoot even when it would ultimately still work.
+const AMBIGUOUS_CHARS = /[ILO01]/;
+
+export function hasAmbiguousChars(code: string): boolean {
+  return AMBIGUOUS_CHARS.test(code);
+}
+
 export async function checkInviteCode(code: string): Promise<boolean> {
   const { data, error } = await supabase.rpc('check_invite_code', { p_code: code });
   if (error) {

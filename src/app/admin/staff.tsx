@@ -9,6 +9,7 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { STAFF_POSITION_OPTIONS, staffPositionLabel } from '@/lib/class-groups';
 import { confirmAction } from '@/lib/confirm';
 import { useAuth } from '@/lib/auth-context';
+import { hasAmbiguousChars } from '@/lib/staff-invites';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -255,6 +256,13 @@ export default function AdminStaffScreen() {
                 autoCorrect={false}
                 style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
               />
+              {hasAmbiguousChars(codeInput) && (
+                <ThemedText themeColor="textSecondary" type="small">
+                  Heads up: this code has letters/numbers that look alike (I, L, O, 0, 1) — easy to
+                  mistype when someone enters it back. They'll still work, but a code without them
+                  is easier to share correctly.
+                </ThemedText>
+              )}
 
               <Pressable
                 onPress={handleCreateCode}
