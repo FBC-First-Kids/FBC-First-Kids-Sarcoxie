@@ -14,7 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { checkInviteCode, redeemInvite, setPendingInvite } from '@/lib/staff-invites';
+import { checkInviteCode, clearPendingInvite, redeemInvite, setPendingInvite } from '@/lib/staff-invites';
 import { supabase } from '@/lib/supabase';
 
 export default function SignUpScreen() {
@@ -59,12 +59,21 @@ export default function SignUpScreen() {
       return;
     }
 
+    // Store the invite before creating the account, not after. signUp() below
+    // establishes a real session almost immediately, which fires auth-context's
+    // own staff-row check in parallel with this function — if that check runs
+    // before this function's own redemption call below finishes, it needs to
+    // find this pending invite already saved so it can complete/retry the
+    // redemption itself instead of reporting "Account Not Set Up" prematurely.
+    await setPendingInvite({ code, fullName: fullName.trim() });
+
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
     });
 
     if (signUpError) {
+      await clearPendingInvite();
       setError(signUpError.message);
       setLoading(false);
       return;
@@ -72,23 +81,26 @@ export default function SignUpScreen() {
 
     if (data.session) {
       const result = await redeemInvite(code, fullName.trim());
-      if (!result.ok) {
-        setError(
-          `${result.message} You already have an account — sign in with the email and password you just set once this is resolved.`,
-        );
+      if (result.ok) {
+        await clearPendingInvite();
         setLoading(false);
+        router.replace('/');
         return;
       }
 
+      if (!result.message.includes('Maximum')) {
+        await clearPendingInvite();
+      }
+      setError(
+        `${result.message} You already have an account — sign in with the email and password you just set once this is resolved.`,
+      );
       setLoading(false);
-      router.replace('/');
       return;
     }
 
     // Email confirmation is required — the code gets redeemed once they confirm
-    // and sign in for the first time (handled in auth-context).
-    await setPendingInvite({ code, fullName: fullName.trim() });
-
+    // and sign in for the first time (handled in auth-context), using the
+    // pending invite already stored above.
     setLoading(false);
     setCheckEmailMessage(
       `Account created! Check ${email.trim()} for a confirmation link, then come back and sign in.`,
