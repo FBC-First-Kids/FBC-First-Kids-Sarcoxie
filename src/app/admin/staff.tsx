@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AdminChrome } from '@/components/admin-chrome';
@@ -11,16 +11,6 @@ import { confirmAction } from '@/lib/confirm';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
-
-const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no O/0, I/1 — easier to read aloud
-
-function generateInviteCode() {
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
-  }
-  return code;
-}
 
 type StaffRow = {
   id: string;
@@ -46,8 +36,9 @@ export default function AdminStaffScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [invitePosition, setInvitePosition] = useState<string | null>(null);
+  const [codeInput, setCodeInput] = useState('');
 
   useEffect(() => {
     if (isMainAdmin) {
@@ -68,11 +59,14 @@ export default function AdminStaffScreen() {
         // and keeps each person's "where do I manage this person" story in one
         // place instead of two.
         supabase.from('staff').select('id, full_name, position').eq('role', 'staff').order('full_name'),
-        // Both pending AND used codes — a used code's Revoke button previously had
-        // nothing to act on, since this query used to filter used ones out entirely.
+        // Position codes only — admin codes are created and managed from Manage
+        // Admins instead. Both pending AND used codes — a used code's Revoke
+        // button previously had nothing to act on, since this query used to
+        // filter used ones out entirely.
         supabase
           .from('staff_invites')
           .select('id, code, created_at, used_at, position')
+          .eq('role', 'staff')
           .order('created_at', { ascending: false }),
       ]);
 
@@ -113,12 +107,12 @@ export default function AdminStaffScreen() {
     setBusyId(null);
   }
 
-  async function handleGenerateInvite() {
-    if (!session || !invitePosition) return;
+  async function handleCreateCode() {
+    const code = codeInput.trim().toUpperCase();
+    if (!session || !invitePosition || !code) return;
     setActionError(null);
-    setGenerating(true);
+    setCreating(true);
 
-    const code = generateInviteCode();
     const { data, error } = await supabase
       .from('staff_invites')
       .insert({ code, created_by: session.user.id, position: invitePosition })
@@ -127,22 +121,26 @@ export default function AdminStaffScreen() {
 
     if (error || !data) {
       console.error('invite create failed', error);
-      setActionError('Something went wrong creating an invite code.');
-      setGenerating(false);
+      setActionError(
+        error?.code === '23505'
+          ? 'That code is already in use — pick a different one.'
+          : 'Something went wrong creating that code.',
+      );
+      setCreating(false);
       return;
     }
 
     setInvites((prev) => [data, ...prev]);
     setInvitePosition(null);
-    setGenerating(false);
+    setCodeInput('');
+    setCreating(false);
   }
 
   function confirmRevokeInvite(invite: InviteRow) {
-    const label = invite.used_at ? 'Delete' : 'Revoke';
     confirmAction(
-      invite.used_at ? 'Delete Used Code' : 'Revoke Invite Code',
-      `${label} code ${invite.code}?`,
-      label,
+      'Revoke Code',
+      `Revoke code ${invite.code}? No one will be able to sign up with it anymore.`,
+      'Revoke',
       () => handleRevokeInvite(invite.id),
     );
   }
@@ -201,12 +199,15 @@ export default function AdminStaffScreen() {
                   staff.map((row) => (
                   <ThemedView key={row.id} type="backgroundElement" style={styles.row}>
                     <View style={styles.rowInfo}>
-                      <ThemedText style={styles.rowName}>{row.full_name}</ThemedText>
+                      <ThemedText style={styles.rowName}>
+                        {row.full_name}
+                        {row.id === session?.user.id ? ' (You)' : ''}
+                      </ThemedText>
                       <ThemedText themeColor="textSecondary" type="small">
                         {row.position ? staffPositionLabel(row.position) : 'No position set'}
                       </ThemedText>
                     </View>
-                    {busyId === row.id ? (
+                    {row.id === session?.user.id ? null : busyId === row.id ? (
                       <ActivityIndicator color={theme.text} />
                     ) : (
                       <Pressable onPress={() => confirmRemoveStaff(row)}>
@@ -219,11 +220,11 @@ export default function AdminStaffScreen() {
               </ThemedView>
 
               <ThemedText type="smallBold" style={styles.sectionLabel}>
-                Invite Codes
+                Sign-Up Codes
               </ThemedText>
               <ThemedText themeColor="textSecondary" type="small">
-                Share a code with a new staff member so they can create an account. Each code works
-                once and is tied to a position.
+                Set a code for a position and share it with anyone who needs it — the same code can
+                be used by multiple people until you revoke it.
               </ThemedText>
 
               <View style={styles.chipRow}>
@@ -245,18 +246,31 @@ export default function AdminStaffScreen() {
                 })}
               </View>
 
+              <TextInput
+                value={codeInput}
+                onChangeText={(value) => setCodeInput(value.toUpperCase())}
+                placeholder="Code (e.g. FBCPREK)"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+              />
+
               <Pressable
-                onPress={handleGenerateInvite}
-                disabled={generating || !invitePosition}
+                onPress={handleCreateCode}
+                disabled={creating || !invitePosition || !codeInput.trim()}
                 style={({ pressed }) => [
                   styles.button,
-                  { backgroundColor: theme.text, opacity: pressed || generating || !invitePosition ? 0.6 : 1 },
+                  {
+                    backgroundColor: theme.text,
+                    opacity: pressed || creating || !invitePosition || !codeInput.trim() ? 0.6 : 1,
+                  },
                 ]}>
-                {generating ? (
+                {creating ? (
                   <ActivityIndicator color={theme.background} />
                 ) : (
                   <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                    Generate Invite Code
+                    Create Code
                   </ThemedText>
                 )}
               </Pressable>
@@ -264,7 +278,7 @@ export default function AdminStaffScreen() {
               <ThemedView style={styles.list}>
                 {invites.length === 0 ? (
                   <ThemedText themeColor="textSecondary" type="small" style={styles.centerText}>
-                    No invite codes yet.
+                    No codes yet.
                   </ThemedText>
                 ) : (
                   invites.map((invite) => (
@@ -273,16 +287,16 @@ export default function AdminStaffScreen() {
                         <ThemedText style={styles.codeText}>{invite.code}</ThemedText>
                         <ThemedText themeColor="textSecondary" type="small">
                           {staffPositionLabel(invite.position)} ·{' '}
-                          {invite.used_at ? 'Used' : 'Pending'}
+                          {invite.used_at
+                            ? `Last used ${new Date(invite.used_at).toLocaleDateString()}`
+                            : 'Not used yet'}
                         </ThemedText>
                       </View>
                       {busyId === invite.id ? (
                         <ActivityIndicator color={theme.text} />
                       ) : (
                         <Pressable onPress={() => confirmRevokeInvite(invite)}>
-                          <ThemedText style={styles.deleteText}>
-                            {invite.used_at ? 'Delete' : 'Revoke'}
-                          </ThemedText>
+                          <ThemedText style={styles.deleteText}>Revoke</ThemedText>
                         </Pressable>
                       )}
                     </ThemedView>
@@ -329,6 +343,13 @@ const styles = StyleSheet.create({
   error: {
     color: '#D0342C',
     textAlign: 'center',
+  },
+  input: {
+    height: 48,
+    borderRadius: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    fontSize: 16,
+    letterSpacing: 1,
   },
   list: {
     gap: Spacing.two,

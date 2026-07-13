@@ -47,6 +47,19 @@ alter table staff_invites enable row level security;
 alter table staff_invites add column if not exists position text
   check (position is null or position in ('pre_k', 'k_2', '3_5', 'volunteer'));
 
+-- What role redeeming this code grants — 'staff' (position codes, Staff
+-- Management) or 'main_admin' (admin codes, Manage Admins). Still subject to
+-- enforce_max_main_admins below, so an admin code can't be redeemed past the
+-- cap of 3 even though it skips the usual promote-an-existing-staffer step.
+alter table staff_invites add column if not exists role text not null default 'staff'
+  check (role in ('staff', 'main_admin'));
+
+-- The plain `code text ... unique` constraint above is case-sensitive, but
+-- check_invite_code/redeem_staff_invite match case-insensitively (upper(code)
+-- = upper(p_code)) — without this, "FBCPREK" and "fbcprek" could both exist
+-- as separate rows and redemption would pick one arbitrarily.
+create unique index if not exists staff_invites_code_upper_idx on staff_invites (upper(code));
+
 create or replace function is_main_admin()
 returns boolean
 language sql
@@ -64,9 +77,33 @@ begin
   -- auth.uid() is null for direct/privileged database access (SQL Editor,
   -- service-role connections, migrations) — only enforce this guard for real
   -- end-user sessions going through the app, not administrative SQL access.
-  if new.role is distinct from old.role and auth.uid() is not null and not is_main_admin() then
-    raise exception 'Only main admins can change staff roles';
+  if new.role is distinct from old.role and auth.uid() is not null then
+    if not is_main_admin() then
+      raise exception 'Only main admins can change staff roles';
+    end if;
+    -- A main admin can demote/promote anyone EXCEPT themselves — otherwise a
+    -- misclick can strand the account with no other admin around to undo it.
+    if new.id = auth.uid() then
+      raise exception 'You cannot change your own role — ask another main admin';
+    end if;
   end if;
+
+  -- Never let the main admin count hit zero, no matter who's acting — two
+  -- different main admins each demoting the OTHER (neither touching their own
+  -- row) would otherwise still be able to strand the account between them.
+  -- Applies unconditionally, including direct SQL access, since this is a
+  -- safety floor rather than a permission check.
+  if old.role = 'main_admin' and new.role <> 'main_admin' then
+    -- Serialize against any other concurrent transaction touching the main
+    -- admin count (same lock key as enforce_max_main_admins below) — without
+    -- this, two simultaneous demotes each read the pre-commit count of 2 and
+    -- both pass, leaving zero main admins.
+    perform pg_advisory_xact_lock(hashtext('staff_main_admin_count'));
+    if (select count(*) from staff where role = 'main_admin') <= 1 then
+      raise exception 'Cannot remove the last main admin';
+    end if;
+  end if;
+
   return new;
 end;
 $$;
@@ -81,6 +118,11 @@ language plpgsql
 as $$
 begin
   if new.role = 'main_admin' and (old.role is null or old.role <> 'main_admin') then
+    -- Admin invite codes are now reusable and shareable, so multiple people
+    -- can redeem the same code within the same instant — without this lock,
+    -- concurrent inserts/updates each read the same pre-commit count and can
+    -- all slip under the cap of 3 at once.
+    perform pg_advisory_xact_lock(hashtext('staff_main_admin_count'));
     if (select count(*) from staff where role = 'main_admin') >= 3 then
       raise exception 'Maximum of 3 main admins allowed';
     end if;
@@ -109,8 +151,15 @@ create policy "staff can update self, main admins update anyone" on staff
   using (id = auth.uid() or is_main_admin())
   with check (id = auth.uid() or is_main_admin());
 
+-- A main admin can delete anyone EXCEPT themselves, and can't delete the last
+-- remaining main admin (whoever it is) — same "never hit zero admins"
+-- reasoning as the role-change guard above.
 create policy "only main admins can delete staff" on staff
-  for delete using (is_main_admin());
+  for delete using (
+    is_main_admin()
+    and id <> auth.uid()
+    and (role <> 'main_admin' or (select count(*) from staff where role = 'main_admin') > 1)
+  );
 
 do $$
 declare pol record;
@@ -123,6 +172,9 @@ end $$;
 create policy "main admins manage invites" on staff_invites
   for all using (is_main_admin()) with check (is_main_admin());
 
+-- Codes are now standing, admin-chosen, reusable per position (e.g. FBCPREK)
+-- rather than single-use random strings — used_at/used_by below just record
+-- the most recent redemption for reference and no longer gate future ones.
 create or replace function check_invite_code(p_code text)
 returns boolean
 language sql
@@ -131,7 +183,7 @@ set search_path = public
 as $$
   select exists (
     select 1 from staff_invites
-    where code = p_code and used_at is null and (expires_at is null or expires_at > now())
+    where upper(code) = upper(p_code) and (expires_at is null or expires_at > now())
   );
 $$;
 grant execute on function check_invite_code(text) to anon, authenticated;
@@ -145,14 +197,14 @@ as $$
 declare
   invite_id uuid;
   invite_position text;
+  invite_role text;
 begin
   if auth.uid() is null then
     raise exception 'Not authenticated';
   end if;
 
-  select id, position into invite_id, invite_position from staff_invites
-    where code = p_code and used_at is null and (expires_at is null or expires_at > now())
-    for update skip locked
+  select id, position, role into invite_id, invite_position, invite_role from staff_invites
+    where upper(code) = upper(p_code) and (expires_at is null or expires_at > now())
     limit 1;
 
   if invite_id is null then
@@ -161,9 +213,13 @@ begin
 
   update staff_invites set used_at = now(), used_by = auth.uid() where id = invite_id;
 
+  -- enforce_max_main_admins still applies here — an admin code can't push the
+  -- main-admin count past 3, it just skips the "promote an existing staffer"
+  -- step for someone who should start as an admin right away.
   insert into staff (id, full_name, role, position)
-    values (auth.uid(), p_full_name, 'staff', invite_position)
-    on conflict (id) do update set full_name = excluded.full_name, position = excluded.position;
+    values (auth.uid(), p_full_name, invite_role, invite_position)
+    on conflict (id) do update
+      set full_name = excluded.full_name, role = excluded.role, position = excluded.position;
 
   return true;
 end;

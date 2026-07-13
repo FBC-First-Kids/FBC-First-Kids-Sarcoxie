@@ -71,10 +71,10 @@ export default function SignUpScreen() {
     }
 
     if (data.session) {
-      const redeemed = await redeemInvite(code, fullName.trim());
-      if (!redeemed) {
+      const result = await redeemInvite(code, fullName.trim());
+      if (!result.ok) {
         setError(
-          'That invite code was just used by someone else. Please ask an admin for a new one, then sign in with the email and password you just set.',
+          `${result.message} You already have an account — sign in with the email and password you just set once this is resolved.`,
         );
         setLoading(false);
         return;

@@ -98,11 +98,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // until now (first real sign-in after confirming), finish it here.
       const pending = await getPendingInvite();
       if (pending) {
-        const redeemed = await redeemInvite(pending.code, pending.fullName);
-        await clearPendingInvite();
-        if (redeemed && !cancelled) {
-          await loadStaffRow();
-          return;
+        const result = await redeemInvite(pending.code, pending.fullName);
+        if (result.ok) {
+          await clearPendingInvite();
+          if (!cancelled) {
+            await loadStaffRow();
+            return;
+          }
+        } else if (!result.message.includes('Maximum')) {
+          // Only discard the pending invite for a permanent failure (bad/revoked
+          // code). A transient one (the 3-admin cap was full at that moment) is
+          // kept so the next sign-in automatically retries redemption once a
+          // slot opens up, instead of stranding the account permanently.
+          await clearPendingInvite();
         }
       }
 

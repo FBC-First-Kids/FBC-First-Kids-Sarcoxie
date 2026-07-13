@@ -39,14 +39,30 @@ export async function checkInviteCode(code: string): Promise<boolean> {
   return data === true;
 }
 
-export async function redeemInvite(code: string, fullName: string): Promise<boolean> {
+export type RedeemInviteResult = { ok: true } | { ok: false; message: string };
+
+export async function redeemInvite(code: string, fullName: string): Promise<RedeemInviteResult> {
   const { data, error } = await supabase.rpc('redeem_staff_invite', {
     p_code: code,
     p_full_name: fullName,
   });
   if (error) {
     console.error('redeem_staff_invite failed', error);
-    return false;
+    // Surface specific, known server-side rejections (e.g. the 3-admin cap)
+    // instead of always reporting the code itself as invalid — the code may
+    // be perfectly valid but momentarily unusable for another reason.
+    return {
+      ok: false,
+      message: error.message.includes('Maximum')
+        ? error.message
+        : 'That invite code is invalid or has expired. Please ask an admin for a new one.',
+    };
   }
-  return data === true;
+  if (data !== true) {
+    return {
+      ok: false,
+      message: 'That invite code is invalid or has expired. Please ask an admin for a new one.',
+    };
+  }
+  return { ok: true };
 }
