@@ -1,25 +1,48 @@
 name: Supabase keep-alive
 
-# Supabase's free tier auto-pauses a project after ~7 days with no API
-# activity. This makes one harmless request every 2 days so the project
-# never goes that long without traffic and never gets paused.
+# Supabase's free tier auto-pauses a project after ~7 days with no activity.
+# A single RPC ping every 2 days was NOT enough in practice — it succeeded 4
+# times in a row and the project paused anyway (Supabase's docs don't fully
+# specify what counts, and it's a known pattern for free hosting tiers to
+# discount predictable, single-signal keep-alive traffic). This runs 4x/day
+# and touches three separate Supabase subsystems (Database, Auth, Edge
+# Functions) — all three are explicitly called out in Supabase's own docs as
+# tracked activity types — to maximize the odds that at least one of them
+# registers, regardless of exactly how their detection works.
 on:
   schedule:
-    - cron: '0 9 */2 * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch: {}
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase project
-        # The anon key is safe to commit here — it's already public, embedded
-        # in the deployed app's JS bundle and protected only by Postgres RLS,
-        # never by secrecy. Using a repo secret would just add a setup step
-        # with no real security benefit.
+      # The anon key below is safe to commit — it's already public, embedded
+      # in the deployed app's JS bundle and protected only by Postgres RLS,
+      # never by secrecy.
+      - name: Ping Database (PostgREST RPC)
         run: |
           curl --fail --silent --show-error -X POST \
             "https://tlskfoemfxuhlhyqdztf.supabase.co/rest/v1/rpc/check_invite_code" \
             -H "apikey: sb_publishable_lYxyXdKcq2sr06Z1oy3RUQ_jDv0lCN2" \
             -H "Content-Type: application/json" \
             -d '{"p_code":"KEEPALIVE_PING"}'
+
+      - name: Ping Auth service
+        run: |
+          curl --fail --silent --show-error \
+            "https://tlskfoemfxuhlhyqdztf.supabase.co/auth/v1/settings" \
+            -H "apikey: sb_publishable_lYxyXdKcq2sr06Z1oy3RUQ_jDv0lCN2"
+
+      - name: Ping Edge Function
+        # Deliberately not --fail: this function correctly rejects bogus
+        # input with a 4xx, which is still a real invocation reaching the
+        # project. Only a connection-level failure (paused/unreachable
+        # project) should fail this step, not an expected 4xx response.
+        run: |
+          curl --silent --show-error --max-time 15 -X POST \
+            "https://tlskfoemfxuhlhyqdztf.supabase.co/functions/v1/pin-signin" \
+            -H "apikey: sb_publishable_lYxyXdKcq2sr06Z1oy3RUQ_jDv0lCN2" \
+            -H "Content-Type: application/json" \
+            -d '{"staffId":"00000000-0000-0000-0000-000000000000","pin":"0000"}'
