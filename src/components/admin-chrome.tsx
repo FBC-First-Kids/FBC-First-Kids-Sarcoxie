@@ -18,6 +18,7 @@ const TABS = [
 const MAIN_ADMIN_TABS = [
   { href: '/admin/admins', label: 'Manage Admins' },
   { href: '/admin/staff', label: 'Staff Management' },
+  { href: '/admin/import', label: 'Import' },
 ] as const;
 
 export function AdminChrome() {

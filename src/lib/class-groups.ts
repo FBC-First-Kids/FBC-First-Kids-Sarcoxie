@@ -40,6 +40,46 @@ export function nextGrade(grade: string): string | null {
   return GRADE_ORDER[index + 1];
 }
 
+// Maps common free-text spellings (from a spreadsheet someone typed by hand)
+// to a grade code — a bulk import can't expect the exact GRADE_OPTIONS label.
+const GRADE_TEXT_ALIASES: Record<string, string> = {
+  prek: 'pre_k',
+  pre: 'pre_k',
+  k: 'k',
+  kindergarten: 'k',
+  kinder: 'k',
+  '1st': '1st',
+  '1stgrade': '1st',
+  '1': '1st',
+  first: '1st',
+  firstgrade: '1st',
+  '2nd': '2nd',
+  '2ndgrade': '2nd',
+  '2': '2nd',
+  second: '2nd',
+  secondgrade: '2nd',
+  '3rd': '3rd',
+  '3rdgrade': '3rd',
+  '3': '3rd',
+  third: '3rd',
+  thirdgrade: '3rd',
+  '4th': '4th',
+  '4thgrade': '4th',
+  '4': '4th',
+  fourth: '4th',
+  fourthgrade: '4th',
+  '5th': '5th',
+  '5thgrade': '5th',
+  '5': '5th',
+  fifth: '5th',
+  fifthgrade: '5th',
+};
+
+export function parseGradeText(raw: string): string | null {
+  const normalized = raw.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return GRADE_TEXT_ALIASES[normalized] ?? null;
+}
+
 // What a staff member helps with — separate from `role` (which is the admin
 // permission level, staff vs main_admin). An invite code carries one of these
 // so a new staff member is tagged with it automatically at sign-up.

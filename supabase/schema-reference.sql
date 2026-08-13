@@ -376,3 +376,132 @@ begin
 end;
 $$;
 grant execute on function verify_staff_pin(uuid, text) to anon, authenticated;
+
+-- ============================================================
+-- Bulk import (initial setup: many parents + students at once)
+-- ============================================================
+
+-- Runs the whole import — guardian dedup/insert, child inserts, and the
+-- child_guardians links between them — as one atomic transaction. Doing
+-- this as three separate client-side inserts risked a partial import (e.g.
+-- guardians created but children/links failing partway through a large
+-- sheet), which would be painful to find and clean up by hand. p_payload
+-- shape:
+--   {
+--     "children":  [{ "key": "<name>|<grade>", "full_name": "...", "grade": "..." }],
+--     "guardians": [{ "key": "<digits-only phone>", "full_name": "...", "phone": "..." }],
+--     "links":     [{ "child_key": "...", "guardian_key": "...", "relationship": "..." }]
+--   }
+-- Guardians are deduped against existing rows by digits-only phone, same
+-- comparison the client already uses in add-guardian.tsx. Children are
+-- never deduped against existing rows (matching that screen's existing
+-- behavior) — only within the payload itself (one row per child, even if
+-- they appear on multiple sheet rows via multiple guardians).
+create or replace function bulk_import_families(p_payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  rec record;
+  new_id uuid;
+  child_id_map jsonb := '{}'::jsonb;
+  guardian_id_map jsonb := '{}'::jsonb;
+  children_created int := 0;
+  guardians_created int := 0;
+  guardians_reused int := 0;
+  links_created int := 0;
+begin
+  if not is_main_admin() then
+    raise exception 'Only main admins can bulk import';
+  end if;
+
+  -- Row-count safety valve — this is meant for one-time initial-setup sheets
+  -- (dozens to low hundreds of rows), not an unbounded bulk-loading tool.
+  -- Each loop below does individual row-by-row inserts, so an accidentally
+  -- huge file could otherwise run long enough to hit a statement timeout
+  -- partway through.
+  if jsonb_array_length(p_payload->'children') > 2000
+    or jsonb_array_length(p_payload->'guardians') > 2000
+    or jsonb_array_length(p_payload->'links') > 4000
+  then
+    raise exception 'That file has too many rows for one import — please split it into smaller batches.';
+  end if;
+
+  for rec in
+    select * from jsonb_to_recordset(p_payload->'guardians') as x(key text, full_name text, phone text)
+  loop
+    select id into new_id from guardians
+      where regexp_replace(coalesce(phone, ''), '\D', '', 'g') = rec.key
+      limit 1;
+    if new_id is null then
+      insert into guardians (full_name, phone) values (rec.full_name, rec.phone) returning id into new_id;
+      guardians_created := guardians_created + 1;
+    else
+      guardians_reused := guardians_reused + 1;
+    end if;
+    guardian_id_map := jsonb_set(guardian_id_map, array[rec.key], to_jsonb(new_id::text));
+  end loop;
+
+  for rec in
+    select * from jsonb_to_recordset(p_payload->'children') as x(key text, full_name text, grade text)
+  loop
+    -- Defense in depth — the client (parseGradeText in import.tsx) already
+    -- only ever sends one of these codes, but this function is callable
+    -- directly by any authenticated staff member via supabase.rpc(), not
+    -- just through that screen, so a bogus grade shouldn't be able to sneak
+    -- a child into a mis-derived class_group silently.
+    if rec.grade not in ('pre_k', 'k', '1st', '2nd', '3rd', '4th', '5th') then
+      raise exception 'Unrecognized grade "%" for child "%"', rec.grade, rec.full_name;
+    end if;
+
+    insert into children (full_name, grade, class_group)
+      values (
+        rec.full_name,
+        rec.grade,
+        case
+          when rec.grade = 'pre_k' then 'pre_k'
+          when rec.grade in ('k', '1st', '2nd') then 'k_2'
+          else '3_5'
+        end
+      )
+      returning id into new_id;
+    children_created := children_created + 1;
+    child_id_map := jsonb_set(child_id_map, array[rec.key], to_jsonb(new_id::text));
+  end loop;
+
+  for rec in
+    select * from jsonb_to_recordset(p_payload->'links') as x(child_key text, guardian_key text, relationship text)
+  loop
+    -- child_id_map/guardian_id_map only have entries for keys that were
+    -- actually inserted above. A jsonb ->> lookup on a missing key silently
+    -- returns NULL rather than erroring, which would otherwise let a
+    -- mismatched link_key insert a child_guardians row with a null FK
+    -- instead of failing loudly.
+    if not (child_id_map ? rec.child_key) then
+      raise exception 'Import data error: no child found for link key "%"', rec.child_key;
+    end if;
+    if not (guardian_id_map ? rec.guardian_key) then
+      raise exception 'Import data error: no guardian found for link key "%"', rec.guardian_key;
+    end if;
+
+    insert into child_guardians (child_id, guardian_id, is_primary, relationship)
+      values (
+        (child_id_map ->> rec.child_key)::uuid,
+        (guardian_id_map ->> rec.guardian_key)::uuid,
+        false,
+        rec.relationship
+      );
+    links_created := links_created + 1;
+  end loop;
+
+  return jsonb_build_object(
+    'children_created', children_created,
+    'guardians_created', guardians_created,
+    'guardians_reused', guardians_reused,
+    'links_created', links_created
+  );
+end;
+$$;
+grant execute on function bulk_import_families(jsonb) to authenticated;
