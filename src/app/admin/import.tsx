@@ -22,15 +22,17 @@ const TEMPLATE_HEADERS = [
   'Relationship',
 ];
 
-type ParsedChild = { key: string; fullName: string; gradeCode: string };
+type ParsedChild = { key: string; fullName: string; gradeCode: string; existingId: string | null };
 type ParsedGuardian = { key: string; fullName: string; phone: string; existingId: string | null };
 type ParsedLink = { childKey: string; guardianKey: string; relationship: string };
 type RowError = { rowNumber: number; reason: string };
 type ImportSummary = {
   children_created: number;
+  children_reused: number;
   guardians_created: number;
   guardians_reused: number;
   links_created: number;
+  links_skipped: number;
 };
 
 // Sheets get filled in by hand, so headers won't always match exactly —
@@ -57,6 +59,14 @@ function getField(row: Record<string, unknown>, ...candidates: string[]): string
 function phoneDedupeKey(raw: string): string {
   const digits = normalizePhone(raw);
   return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+// Used both to key a child within the sheet (so multiple rows for the same
+// child, one per guardian, collapse into one) and to match against a child
+// who already exists in the app, so re-running an import (or importing an
+// updated version of the same roster) doesn't create duplicates.
+function nameDedupeKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 export default function AdminImportScreen() {
@@ -186,7 +196,7 @@ export default function AdminImportScreen() {
 
   async function processRows(rows: Record<string, unknown>[]) {
     const errors: RowError[] = [];
-    const childMap = new Map<string, ParsedChild>();
+    const childMap = new Map<string, { fullName: string; gradeCode: string }>();
     const guardianMap = new Map<string, { fullName: string; phone: string }>();
     const linkList: ParsedLink[] = [];
     const seenLinkKeys = new Set<string>();
@@ -227,9 +237,9 @@ export default function AdminImportScreen() {
         return;
       }
 
-      const childKey = `${childName.trim().toLowerCase()}|${gradeCode}`;
+      const childKey = `${nameDedupeKey(childName)}|${gradeCode}`;
       if (!childMap.has(childKey)) {
-        childMap.set(childKey, { key: childKey, fullName: childName, gradeCode });
+        childMap.set(childKey, { fullName: childName, gradeCode });
       }
       if (!guardianMap.has(phoneDigits)) {
         guardianMap.set(phoneDigits, { fullName: guardianName, phone: guardianPhone });
@@ -252,13 +262,17 @@ export default function AdminImportScreen() {
       return;
     }
 
-    const { data: existingGuardians, error: existingError } = await supabase
-      .from('guardians')
-      .select('id, phone');
+    const [
+      { data: existingGuardians, error: existingGuardiansError },
+      { data: existingChildren, error: existingChildrenError },
+    ] = await Promise.all([
+      supabase.from('guardians').select('id, phone'),
+      supabase.from('children').select('id, full_name, grade'),
+    ]);
 
-    if (existingError) {
-      console.error('guardians lookup failed', existingError);
-      setParseError('Could not check for existing guardians. Please try again.');
+    if (existingGuardiansError || existingChildrenError) {
+      console.error('existing records lookup failed', existingGuardiansError, existingChildrenError);
+      setParseError('Could not check for existing guardians/children. Please try again.');
       return;
     }
 
@@ -267,6 +281,11 @@ export default function AdminImportScreen() {
         .filter((g) => g.phone)
         .map((g) => [phoneDedupeKey(g.phone as string), g.id as string]),
     );
+    const existingByNameGrade = new Map(
+      (existingChildren ?? [])
+        .filter((c) => c.grade)
+        .map((c) => [`${nameDedupeKey(c.full_name as string)}|${c.grade}`, c.id as string]),
+    );
 
     const guardianList: ParsedGuardian[] = [...guardianMap.entries()].map(([key, g]) => ({
       key,
@@ -274,18 +293,25 @@ export default function AdminImportScreen() {
       phone: g.phone,
       existingId: existingByPhone.get(key) ?? null,
     }));
+    const childList: ParsedChild[] = [...childMap.entries()].map(([key, c]) => ({
+      key,
+      fullName: c.fullName,
+      gradeCode: c.gradeCode,
+      existingId: existingByNameGrade.get(key) ?? null,
+    }));
 
-    setChildren([...childMap.values()]);
+    setChildren(childList);
     setGuardians(guardianList);
     setLinks(linkList);
     setStep('preview');
   }
 
   function confirmImport() {
+    const newChildCount = children.filter((c) => !c.existingId).length;
     const newGuardianCount = guardians.filter((g) => !g.existingId).length;
     confirmAction(
       'Import Families',
-      `This will create ${children.length} ${children.length === 1 ? 'child' : 'children'} and ${newGuardianCount} new guardian${newGuardianCount === 1 ? '' : 's'}, with ${links.length} guardian-child link${links.length === 1 ? '' : 's'}. Continue?`,
+      `This will create ${newChildCount} new ${newChildCount === 1 ? 'child' : 'children'} and ${newGuardianCount} new guardian${newGuardianCount === 1 ? '' : 's'}, with up to ${links.length} guardian-child link${links.length === 1 ? '' : 's'} (anything already in the system will be skipped, not duplicated). Continue?`,
       'Import',
       handleImport,
     );
@@ -347,10 +373,13 @@ export default function AdminImportScreen() {
           <ScrollView contentContainerStyle={styles.list}>
             <ThemedText themeColor="textSecondary">
               Upload a spreadsheet to add many parents and children at once — useful for initial
-              setup. One row per child-guardian pair; if a child has two guardians, or a guardian
-              has multiple children, just repeat that name on another row. If two different
-              children share the exact same name and grade, add a middle initial or nickname to
-              one of them so they don't get merged into a single child (e.g. "Emma R. Johnson").
+              setup, or for adding a new batch of families anytime. Anyone already in the system
+              (matched by child name + grade, or guardian phone number) is skipped instead of
+              duplicated, so it's safe to re-import the same or an updated sheet. One row per
+              child-guardian pair; if a child has two guardians, or a guardian has multiple
+              children, just repeat that name on another row. If two different children share the
+              exact same name and grade, add a middle initial or nickname to one of them so they
+              don't get matched together (e.g. "Emma R. Johnson").
             </ThemedText>
 
             <ThemedView type="backgroundElement" style={styles.templateBox}>
@@ -410,7 +439,9 @@ export default function AdminImportScreen() {
 
             <ThemedView type="backgroundElement" style={styles.summaryBox}>
               <ThemedText>
-                {children.length} {children.length === 1 ? 'child' : 'children'}
+                {children.length} {children.length === 1 ? 'child' : 'children'} (
+                {children.filter((c) => !c.existingId).length} new,{' '}
+                {children.filter((c) => c.existingId).length} already in the system)
               </ThemedText>
               <ThemedText>
                 {guardians.length} {guardians.length === 1 ? 'guardian' : 'guardians'} (
@@ -418,7 +449,8 @@ export default function AdminImportScreen() {
                 {guardians.filter((g) => g.existingId).length} already in the system)
               </ThemedText>
               <ThemedText>
-                {links.length} guardian-child link{links.length === 1 ? '' : 's'}
+                {links.length} guardian-child link{links.length === 1 ? '' : 's'} (any that already
+                exist will be skipped)
               </ThemedText>
             </ThemedView>
 
@@ -440,7 +472,8 @@ export default function AdminImportScreen() {
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
               Double-check anyone linked to guardians who don't look related — that usually means
-              two different children with the same name and grade got merged into one.
+              two different children with the same name and grade got matched together, either
+              within this file or against someone already in the system.
             </ThemedText>
             {children.map((c) => {
               const guardianNames = links
@@ -449,7 +482,8 @@ export default function AdminImportScreen() {
                 .join(', ');
               return (
                 <ThemedText key={c.key} type="small" themeColor="textSecondary">
-                  {c.fullName} — {GRADE_OPTIONS.find((g) => g.value === c.gradeCode)?.label ?? c.gradeCode}
+                  {c.fullName} — {GRADE_OPTIONS.find((g) => g.value === c.gradeCode)?.label ?? c.gradeCode}{' '}
+                  {c.existingId ? '(already in system)' : '(new)'}
                   {guardianNames ? ` — guardians: ${guardianNames}` : ''}
                 </ThemedText>
               );
@@ -473,7 +507,7 @@ export default function AdminImportScreen() {
                 { backgroundColor: theme.text, opacity: pressed ? 0.6 : 1 },
               ]}>
               <ThemedText style={[styles.buttonText, { color: theme.background }]}>
-                Import {children.length} {children.length === 1 ? 'Child' : 'Children'}
+                Import File
               </ThemedText>
             </Pressable>
           </ScrollView>
@@ -494,11 +528,13 @@ export default function AdminImportScreen() {
               Import complete
             </ThemedText>
             <ThemedText style={styles.success}>
-              Created {summary.children_created}{' '}
-              {summary.children_created === 1 ? 'child' : 'children'}, {summary.guardians_created}{' '}
-              new {summary.guardians_created === 1 ? 'guardian' : 'guardians'} (
-              {summary.guardians_reused} already existed), and {summary.links_created}{' '}
-              guardian-child link{summary.links_created === 1 ? '' : 's'}.
+              Created {summary.children_created} new{' '}
+              {summary.children_created === 1 ? 'child' : 'children'} ({summary.children_reused}{' '}
+              already existed), {summary.guardians_created} new{' '}
+              {summary.guardians_created === 1 ? 'guardian' : 'guardians'} (
+              {summary.guardians_reused} already existed), and {summary.links_created} new
+              guardian-child link{summary.links_created === 1 ? '' : 's'} ({summary.links_skipped}{' '}
+              already existed).
             </ThemedText>
             <Pressable
               onPress={reset}

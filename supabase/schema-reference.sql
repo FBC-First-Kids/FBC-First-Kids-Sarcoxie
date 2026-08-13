@@ -378,10 +378,10 @@ $$;
 grant execute on function verify_staff_pin(uuid, text) to anon, authenticated;
 
 -- ============================================================
--- Bulk import (initial setup: many parents + students at once)
+-- Bulk import (many parents + students at once — safe to re-run)
 -- ============================================================
 
--- Runs the whole import — guardian dedup/insert, child inserts, and the
+-- Runs a whole import — guardian dedup/insert, child dedup/insert, and the
 -- child_guardians links between them — as one atomic transaction. Doing
 -- this as three separate client-side inserts risked a partial import (e.g.
 -- guardians created but children/links failing partway through a large
@@ -392,11 +392,13 @@ grant execute on function verify_staff_pin(uuid, text) to anon, authenticated;
 --     "guardians": [{ "key": "<digits-only phone>", "full_name": "...", "phone": "..." }],
 --     "links":     [{ "child_key": "...", "guardian_key": "...", "relationship": "..." }]
 --   }
--- Guardians are deduped against existing rows by digits-only phone, same
--- comparison the client already uses in add-guardian.tsx. Children are
--- never deduped against existing rows (matching that screen's existing
--- behavior) — only within the payload itself (one row per child, even if
--- they appear on multiple sheet rows via multiple guardians).
+-- Meant to be safe to run more than once (e.g. an updated roster, or the
+-- same sheet re-uploaded by mistake): guardians are matched against
+-- existing rows by digits-only phone (same comparison add-guardian.tsx
+-- already uses), children are matched by case/whitespace-insensitive full
+-- name + grade, and a child_guardians link is skipped if that exact
+-- child-guardian pair is already linked. Anything already present is
+-- reused/skipped rather than duplicated.
 create or replace function bulk_import_families(p_payload jsonb)
 returns jsonb
 language plpgsql
@@ -409,19 +411,20 @@ declare
   child_id_map jsonb := '{}'::jsonb;
   guardian_id_map jsonb := '{}'::jsonb;
   children_created int := 0;
+  children_reused int := 0;
   guardians_created int := 0;
   guardians_reused int := 0;
   links_created int := 0;
+  links_skipped int := 0;
 begin
   if not is_main_admin() then
     raise exception 'Only main admins can bulk import';
   end if;
 
-  -- Row-count safety valve — this is meant for one-time initial-setup sheets
-  -- (dozens to low hundreds of rows), not an unbounded bulk-loading tool.
-  -- Each loop below does individual row-by-row inserts, so an accidentally
-  -- huge file could otherwise run long enough to hit a statement timeout
-  -- partway through.
+  -- Row-count safety valve — meant for a roster-sized sheet (dozens to low
+  -- hundreds of rows), not an unbounded bulk-loading tool. Each loop below
+  -- does individual row-by-row inserts, so an accidentally huge file could
+  -- otherwise run long enough to hit a statement timeout partway through.
   if jsonb_array_length(p_payload->'children') > 2000
     or jsonb_array_length(p_payload->'guardians') > 2000
     or jsonb_array_length(p_payload->'links') > 4000
@@ -456,18 +459,32 @@ begin
       raise exception 'Unrecognized grade "%" for child "%"', rec.grade, rec.full_name;
     end if;
 
-    insert into children (full_name, grade, class_group)
-      values (
-        rec.full_name,
-        rec.grade,
-        case
-          when rec.grade = 'pre_k' then 'pre_k'
-          when rec.grade in ('k', '1st', '2nd') then 'k_2'
-          else '3_5'
-        end
-      )
-      returning id into new_id;
-    children_created := children_created + 1;
+    -- Matched by case/whitespace-insensitive full name + grade — same
+    -- normalization (trim, lowercase, collapse internal whitespace) the
+    -- client uses to build rec.key, so a name that only differs by
+    -- capitalization or extra spaces still matches an existing child.
+    select id into new_id from children
+      where lower(trim(regexp_replace(full_name, '\s+', ' ', 'g')))
+          = lower(trim(regexp_replace(rec.full_name, '\s+', ' ', 'g')))
+        and grade = rec.grade
+      limit 1;
+
+    if new_id is null then
+      insert into children (full_name, grade, class_group)
+        values (
+          rec.full_name,
+          rec.grade,
+          case
+            when rec.grade = 'pre_k' then 'pre_k'
+            when rec.grade in ('k', '1st', '2nd') then 'k_2'
+            else '3_5'
+          end
+        )
+        returning id into new_id;
+      children_created := children_created + 1;
+    else
+      children_reused := children_reused + 1;
+    end if;
     child_id_map := jsonb_set(child_id_map, array[rec.key], to_jsonb(new_id::text));
   end loop;
 
@@ -475,7 +492,7 @@ begin
     select * from jsonb_to_recordset(p_payload->'links') as x(child_key text, guardian_key text, relationship text)
   loop
     -- child_id_map/guardian_id_map only have entries for keys that were
-    -- actually inserted above. A jsonb ->> lookup on a missing key silently
+    -- actually resolved above. A jsonb ->> lookup on a missing key silently
     -- returns NULL rather than erroring, which would otherwise let a
     -- mismatched link_key insert a child_guardians row with a null FK
     -- instead of failing loudly.
@@ -486,21 +503,31 @@ begin
       raise exception 'Import data error: no guardian found for link key "%"', rec.guardian_key;
     end if;
 
-    insert into child_guardians (child_id, guardian_id, is_primary, relationship)
-      values (
-        (child_id_map ->> rec.child_key)::uuid,
-        (guardian_id_map ->> rec.guardian_key)::uuid,
-        false,
-        rec.relationship
-      );
-    links_created := links_created + 1;
+    if exists (
+      select 1 from child_guardians
+        where child_id = (child_id_map ->> rec.child_key)::uuid
+          and guardian_id = (guardian_id_map ->> rec.guardian_key)::uuid
+    ) then
+      links_skipped := links_skipped + 1;
+    else
+      insert into child_guardians (child_id, guardian_id, is_primary, relationship)
+        values (
+          (child_id_map ->> rec.child_key)::uuid,
+          (guardian_id_map ->> rec.guardian_key)::uuid,
+          false,
+          rec.relationship
+        );
+      links_created := links_created + 1;
+    end if;
   end loop;
 
   return jsonb_build_object(
     'children_created', children_created,
+    'children_reused', children_reused,
     'guardians_created', guardians_created,
     'guardians_reused', guardians_reused,
-    'links_created', links_created
+    'links_created', links_created,
+    'links_skipped', links_skipped
   );
 end;
 $$;
