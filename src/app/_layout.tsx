@@ -82,6 +82,7 @@ export default function RootLayout() {
           <Stack.Screen name="admin-pin" options={{ presentation: 'modal' }} />
           <Stack.Screen name="account-pending" options={{ presentation: 'modal' }} />
           <Stack.Screen name="parent-signin" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="manage-family" options={{ presentation: 'modal' }} />
           <Stack.Screen name="admin" options={{ presentation: 'modal' }} />
         </Stack>
       </AuthProvider>

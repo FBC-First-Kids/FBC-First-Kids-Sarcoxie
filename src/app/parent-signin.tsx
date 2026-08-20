@@ -29,7 +29,8 @@ type ChildEntry = {
 };
 
 type GuardianEntry = {
-  fullName: string;
+  firstName: string;
+  lastName: string;
   phone: string;
   relationship: string;
   otherRelationship: string;
@@ -127,7 +128,8 @@ export default function ParentSignInScreen() {
   const [submitting, setSubmitting] = useState<'checked_in' | 'checked_out' | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
 
-  const [guardianFullName, setGuardianFullName] = useState('');
+  const [guardianFirstName, setGuardianFirstName] = useState('');
+  const [guardianLastName, setGuardianLastName] = useState('');
   const [childEntries, setChildEntries] = useState<ChildEntry[]>([
     { firstName: '', lastName: '', relationship: '', otherRelationship: '', grade: '' },
   ]);
@@ -147,7 +149,8 @@ export default function ParentSignInScreen() {
     setSelectedIds(new Set());
     setSubmitting(null);
     setConfirmation(null);
-    setGuardianFullName('');
+    setGuardianFirstName('');
+    setGuardianLastName('');
     setChildEntries([{ firstName: '', lastName: '', relationship: '', otherRelationship: '', grade: '' }]);
     setGuardianEntries([]);
     setCreating(false);
@@ -332,7 +335,7 @@ export default function ParentSignInScreen() {
   function addGuardianEntry() {
     setGuardianEntries((prev) => [
       ...prev,
-      { fullName: '', phone: '', relationship: '', otherRelationship: '' },
+      { firstName: '', lastName: '', phone: '', relationship: '', otherRelationship: '' },
     ]);
   }
 
@@ -351,7 +354,7 @@ export default function ParentSignInScreen() {
       grade: c.grade,
     }));
 
-    if (!guardianFullName.trim() || normalizePhone(phone).length === 0) {
+    if (!guardianFirstName.trim() || !guardianLastName.trim() || normalizePhone(phone).length === 0) {
       setCreateError('Please fill in your name and phone number.');
       return;
     }
@@ -395,16 +398,17 @@ export default function ParentSignInScreen() {
     }
 
     const trimmedGuardianEntries = guardianEntries.map((g) => ({
-      fullName: g.fullName.trim(),
+      firstName: g.firstName.trim(),
+      lastName: g.lastName.trim(),
       phone: g.phone.trim(),
       relationship: g.relationship,
       otherRelationship: g.otherRelationship.trim(),
     }));
     const startedGuardianEntries = trimmedGuardianEntries.filter(
-      (g) => g.fullName || g.phone || g.relationship,
+      (g) => g.firstName || g.lastName || g.phone || g.relationship,
     );
     const guardianMissingInfo = startedGuardianEntries.some(
-      (g) => !(g.fullName && normalizePhone(g.phone) && g.relationship),
+      (g) => !(g.firstName && g.lastName && normalizePhone(g.phone) && g.relationship),
     );
     if (guardianMissingInfo) {
       setCreateError('Please enter a name, phone number, and relationship for each additional guardian.');
@@ -422,7 +426,10 @@ export default function ParentSignInScreen() {
 
     const { data: guardian, error: guardianError } = await supabase
       .from('guardians')
-      .insert({ full_name: guardianFullName.trim(), phone: phone.trim() })
+      .insert({
+        full_name: `${guardianFirstName.trim()} ${guardianLastName.trim()}`,
+        phone: phone.trim(),
+      })
       .select('id')
       .single();
 
@@ -499,7 +506,7 @@ export default function ParentSignInScreen() {
 
         const { data: newGuardian, error: newGuardianError } = await supabase
           .from('guardians')
-          .insert({ full_name: g.fullName, phone: g.phone })
+          .insert({ full_name: `${g.firstName} ${g.lastName}`, phone: g.phone })
           .select('id')
           .single();
 
@@ -691,9 +698,16 @@ export default function ParentSignInScreen() {
         ) : mode === 'create' ? (
           <ScrollView contentContainerStyle={styles.form}>
             <TextInput
-              value={guardianFullName}
-              onChangeText={setGuardianFullName}
-              placeholder="Your Full Name"
+              value={guardianFirstName}
+              onChangeText={setGuardianFirstName}
+              placeholder="Your First Name"
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+            />
+            <TextInput
+              value={guardianLastName}
+              onChangeText={setGuardianLastName}
+              placeholder="Your Last Name"
               placeholderTextColor={theme.textSecondary}
               style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
             />
@@ -781,9 +795,20 @@ export default function ParentSignInScreen() {
             {guardianEntries.map((entry, index) => (
               <ThemedView key={index} style={styles.childEntryRow}>
                 <TextInput
-                  value={entry.fullName}
-                  onChangeText={(value) => updateGuardianEntry(index, 'fullName', value)}
-                  placeholder="Full Name"
+                  value={entry.firstName}
+                  onChangeText={(value) => updateGuardianEntry(index, 'firstName', value)}
+                  placeholder="First Name"
+                  placeholderTextColor={theme.textSecondary}
+                  style={[
+                    styles.input,
+                    styles.childEntryInput,
+                    { color: theme.text, backgroundColor: theme.backgroundElement },
+                  ]}
+                />
+                <TextInput
+                  value={entry.lastName}
+                  onChangeText={(value) => updateGuardianEntry(index, 'lastName', value)}
+                  placeholder="Last Name"
                   placeholderTextColor={theme.textSecondary}
                   style={[
                     styles.input,
@@ -1007,6 +1032,14 @@ export default function ParentSignInScreen() {
                 )}
               </Pressable>
             </ThemedView>
+
+            <Pressable
+              onPress={() => router.push({ pathname: '/manage-family', params: { phone } })}
+              style={styles.addChildLink}>
+              <ThemedText type="link" themeColor="textSecondary">
+                Manage My Family (add/edit/remove children or guardians)
+              </ThemedText>
+            </Pressable>
           </ThemedView>
         )}
       </SafeAreaView>

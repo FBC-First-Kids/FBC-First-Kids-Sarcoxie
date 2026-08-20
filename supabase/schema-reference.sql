@@ -532,3 +532,161 @@ begin
 end;
 $$;
 grant execute on function bulk_import_families(jsonb) to authenticated;
+
+-- ============================================================
+-- Lock down children/guardians/checkins to staff only
+-- ============================================================
+
+-- Discovered while building the parent-facing family-management feature:
+-- anon UPDATE/DELETE on these tables was wide open — anyone with just the
+-- public anon key (embedded in the deployed app's JS bundle, meant to be
+-- public) could modify or permanently delete any child, guardian, checkin,
+-- or notification-read row directly via the REST API, with no login and
+-- without ever touching the app itself. INSERT was already correctly
+-- blocked for anon; UPDATE/DELETE (and possibly SELECT) were not.
+--
+-- Every real read/write in this app already happens under an authenticated
+-- staff session — the whole kiosk app requires staff sign-in before any
+-- screen renders (see AuthGate in src/app/_layout.tsx), including the
+-- parent-facing check-in and family-management screens. So restricting all
+-- operations on these tables to the `authenticated` role matches how the
+-- app actually behaves and closes the anon-access gap with no functional
+-- change from the app's perspective.
+alter table children enable row level security;
+alter table guardians enable row level security;
+alter table child_guardians enable row level security;
+alter table checkins enable row level security;
+alter table notifications enable row level security;
+alter table notification_reads enable row level security;
+
+do $$
+declare pol record; tbl text;
+begin
+  foreach tbl in array array['children', 'guardians', 'child_guardians', 'checkins', 'notifications', 'notification_reads']
+  loop
+    for pol in select policyname from pg_policies where tablename = tbl loop
+      execute format('drop policy %I on %I', pol.policyname, tbl);
+    end loop;
+  end loop;
+end $$;
+
+create policy "staff can manage children" on children
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "staff can manage guardians" on guardians
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "staff can manage child_guardians" on child_guardians
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "staff can manage checkins" on checkins
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "staff can manage notifications" on notifications
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "staff can manage notification_reads" on notification_reads
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+-- ============================================================
+-- Parent-facing family self-service (manage-family.tsx)
+-- ============================================================
+
+-- Adds a child and links them to one or more guardians as a single atomic
+-- transaction — doing this as two separate client-side inserts risked a
+-- child ending up "orphaned" (no guardian link) if the second call failed,
+-- which would make the child invisible again on the next phone lookup
+-- (family resolution is entirely link-reachability based) with no way for
+-- the parent to find or fix it themselves.
+create or replace function add_family_child(
+  p_full_name text, p_grade text, p_guardian_ids uuid[], p_relationship text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_child_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  if p_grade not in ('pre_k', 'k', '1st', '2nd', '3rd', '4th', '5th') then
+    raise exception 'Unrecognized grade "%"', p_grade;
+  end if;
+  if p_guardian_ids is null or array_length(p_guardian_ids, 1) is null then
+    raise exception 'At least one guardian is required';
+  end if;
+
+  insert into children (full_name, grade, class_group)
+    values (
+      p_full_name,
+      p_grade,
+      case
+        when p_grade = 'pre_k' then 'pre_k'
+        when p_grade in ('k', '1st', '2nd') then 'k_2'
+        else '3_5'
+      end
+    )
+    returning id into new_child_id;
+
+  insert into child_guardians (child_id, guardian_id, is_primary, relationship)
+    select new_child_id, gid, false, p_relationship from unnest(p_guardian_ids) as gid;
+
+  return new_child_id;
+end;
+$$;
+grant execute on function add_family_child(text, text, uuid[], text) to authenticated;
+
+-- Adds a guardian (matched against existing rows by digits-only phone, same
+-- comparison used elsewhere) and links them to one or more children, as a
+-- single atomic transaction for the same reason as add_family_child above.
+-- Returns which guardian ended up used and whether it was a pre-existing
+-- match, so the client can show that guardian's name for confirmation
+-- *before* calling this — a phone typo that happens to match an unrelated
+-- existing guardian would otherwise silently link a stranger into this
+-- family with no indication anything unusual happened.
+create or replace function add_family_guardian(
+  p_full_name text, p_phone text, p_child_ids uuid[], p_relationship text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_guardian_id uuid;
+  target_full_name text;
+  matched boolean := false;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+  if p_child_ids is null or array_length(p_child_ids, 1) is null then
+    raise exception 'At least one child is required';
+  end if;
+
+  select id, full_name into target_guardian_id, target_full_name from guardians
+    where regexp_replace(coalesce(phone, ''), '\D', '', 'g')
+        = regexp_replace(coalesce(p_phone, ''), '\D', '', 'g')
+    limit 1;
+
+  if target_guardian_id is null then
+    insert into guardians (full_name, phone) values (p_full_name, p_phone)
+      returning id, full_name into target_guardian_id, target_full_name;
+  else
+    matched := true;
+  end if;
+
+  insert into child_guardians (child_id, guardian_id, is_primary, relationship)
+    select cid, target_guardian_id, false, p_relationship
+    from unnest(p_child_ids) as cid
+    where not exists (
+      select 1 from child_guardians cg
+      where cg.child_id = cid and cg.guardian_id = target_guardian_id
+    );
+
+  return jsonb_build_object(
+    'guardian_id', target_guardian_id,
+    'full_name', target_full_name,
+    'matched_existing', matched
+  );
+end;
+$$;
+grant execute on function add_family_guardian(text, text, uuid[], text) to authenticated;
