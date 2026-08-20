@@ -16,7 +16,7 @@ import { classGroupForGrade, GRADE_OPTIONS, gradeLabel } from '@/lib/class-group
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { deleteChildCascade, deleteGuardianCascade } from '@/lib/child-actions';
 import { confirmAction } from '@/lib/confirm';
-import { formatPhoneInput } from '@/lib/phone';
+import { formatPhoneInput, normalizePhone } from '@/lib/phone';
 import { supabase } from '@/lib/supabase';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -54,6 +54,18 @@ export default function AdminManageProfilesScreen() {
   const [editGuardianPhone, setEditGuardianPhone] = useState('');
 
   const [savingEdit, setSavingEdit] = useState(false);
+
+  const [addingChild, setAddingChild] = useState(false);
+  const [newChildFirstName, setNewChildFirstName] = useState('');
+  const [newChildLastName, setNewChildLastName] = useState('');
+  const [newChildGrade, setNewChildGrade] = useState('');
+  const [savingNewChild, setSavingNewChild] = useState(false);
+
+  const [addingGuardian, setAddingGuardian] = useState(false);
+  const [newGuardianFirstName, setNewGuardianFirstName] = useState('');
+  const [newGuardianLastName, setNewGuardianLastName] = useState('');
+  const [newGuardianPhone, setNewGuardianPhone] = useState('');
+  const [savingNewGuardian, setSavingNewGuardian] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -220,6 +232,94 @@ export default function AdminManageProfilesScreen() {
     setDeletingId(null);
   }
 
+  async function handleAddChild() {
+    if (!newChildFirstName.trim() || !newChildLastName.trim() || !newChildGrade) {
+      setActionError('Please enter a first name, last name, and grade.');
+      return;
+    }
+    setActionError(null);
+    setSavingNewChild(true);
+
+    const { data, error } = await supabase
+      .from('children')
+      .insert({
+        full_name: `${newChildFirstName.trim()} ${newChildLastName.trim()}`,
+        grade: newChildGrade,
+        class_group: classGroupForGrade(newChildGrade),
+      })
+      .select('id, full_name, grade')
+      .single();
+
+    setSavingNewChild(false);
+
+    if (error || !data) {
+      console.error('child insert failed', error);
+      setActionError('Something went wrong adding that child.');
+      return;
+    }
+
+    setChildren((prev) => [...prev, data].sort((a, b) => a.full_name.localeCompare(b.full_name)));
+    setNewChildFirstName('');
+    setNewChildLastName('');
+    setNewChildGrade('');
+    setAddingChild(false);
+  }
+
+  async function handleAddGuardian() {
+    if (
+      !newGuardianFirstName.trim() ||
+      !newGuardianLastName.trim() ||
+      normalizePhone(newGuardianPhone).length === 0
+    ) {
+      setActionError('Please enter a first name, last name, and phone number.');
+      return;
+    }
+    setActionError(null);
+    setSavingNewGuardian(true);
+
+    const digits = normalizePhone(newGuardianPhone);
+    const { data: existing, error: existingError } = await supabase
+      .from('guardians')
+      .select('id, full_name, phone');
+
+    if (existingError) {
+      console.error('guardians lookup failed', existingError);
+      setActionError('Something went wrong. Please try again.');
+      setSavingNewGuardian(false);
+      return;
+    }
+
+    const match = (existing ?? []).find((g) => normalizePhone(g.phone ?? '') === digits);
+    if (match) {
+      setActionError(`A guardian named "${match.full_name}" already has this phone number.`);
+      setSavingNewGuardian(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('guardians')
+      .insert({
+        full_name: `${newGuardianFirstName.trim()} ${newGuardianLastName.trim()}`,
+        phone: newGuardianPhone.trim(),
+      })
+      .select('id, full_name, phone')
+      .single();
+
+    setSavingNewGuardian(false);
+
+    if (error || !data) {
+      console.error('guardian insert failed', error);
+      setActionError('Something went wrong adding that guardian.');
+      return;
+    }
+
+    setGuardians((prev) => [...prev, data].sort((a, b) => a.full_name.localeCompare(b.full_name)));
+    setNewGuardianFirstName('');
+    setNewGuardianLastName('');
+    setNewGuardianPhone('');
+    setAddingGuardian(false);
+  }
+
   const filteredChildren = children.filter((c) =>
     c.full_name.toLowerCase().includes(search.trim().toLowerCase()),
   );
@@ -279,8 +379,9 @@ export default function AdminManageProfilesScreen() {
           <ThemedText style={styles.error}>{loadError}</ThemedText>
         ) : (
           <ScrollView contentContainerStyle={styles.list}>
-            {tab === 'children'
-              ? filteredChildren.map((child) =>
+            {tab === 'children' ? (
+              <>
+                {filteredChildren.map((child) =>
                   editingChildId === child.id ? (
                     <ThemedView key={child.id} type="backgroundElement" style={styles.editCard}>
                       <TextInput
@@ -353,8 +454,69 @@ export default function AdminManageProfilesScreen() {
                       </View>
                     </ThemedView>
                   ),
-                )
-              : filteredGuardians.map((guardian) =>
+                )}
+
+                {addingChild ? (
+                  <ThemedView type="backgroundElement" style={styles.editCard}>
+                    <TextInput
+                      value={newChildFirstName}
+                      onChangeText={setNewChildFirstName}
+                      placeholder="Child's First Name"
+                      placeholderTextColor={theme.textSecondary}
+                      style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                    />
+                    <TextInput
+                      value={newChildLastName}
+                      onChangeText={setNewChildLastName}
+                      placeholder="Child's Last Name"
+                      placeholderTextColor={theme.textSecondary}
+                      style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                    />
+                    <ThemedText type="small" themeColor="textSecondary">
+                      Grade
+                    </ThemedText>
+                    <View style={styles.chipRow}>
+                      {GRADE_OPTIONS.map((option) => {
+                        const selected = newChildGrade === option.value;
+                        return (
+                          <Pressable
+                            key={option.value}
+                            onPress={() => setNewChildGrade(option.value)}
+                            style={[
+                              styles.chip,
+                              { backgroundColor: selected ? theme.text : theme.background },
+                            ]}>
+                            <ThemedText
+                              type="small"
+                              style={{ color: selected ? theme.background : theme.text }}>
+                              {option.label}
+                            </ThemedText>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <View style={styles.editActions}>
+                      <Pressable onPress={() => setAddingChild(false)}>
+                        <ThemedText themeColor="textSecondary">Cancel</ThemedText>
+                      </Pressable>
+                      <Pressable onPress={handleAddChild} disabled={savingNewChild}>
+                        {savingNewChild ? (
+                          <ActivityIndicator color={theme.text} />
+                        ) : (
+                          <ThemedText type="link">Add Child</ThemedText>
+                        )}
+                      </Pressable>
+                    </View>
+                  </ThemedView>
+                ) : (
+                  <Pressable onPress={() => setAddingChild(true)} style={styles.addLink}>
+                    <ThemedText type="link">+ Add a Child</ThemedText>
+                  </Pressable>
+                )}
+              </>
+            ) : (
+              <>
+                {filteredGuardians.map((guardian) =>
                   editingGuardianId === guardian.id ? (
                     <ThemedView key={guardian.id} type="backgroundElement" style={styles.editCard}>
                       <TextInput
@@ -420,6 +582,51 @@ export default function AdminManageProfilesScreen() {
                     </ThemedView>
                   ),
                 )}
+
+                {addingGuardian ? (
+                  <ThemedView type="backgroundElement" style={styles.editCard}>
+                    <TextInput
+                      value={newGuardianFirstName}
+                      onChangeText={setNewGuardianFirstName}
+                      placeholder="First Name"
+                      placeholderTextColor={theme.textSecondary}
+                      style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                    />
+                    <TextInput
+                      value={newGuardianLastName}
+                      onChangeText={setNewGuardianLastName}
+                      placeholder="Last Name"
+                      placeholderTextColor={theme.textSecondary}
+                      style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                    />
+                    <TextInput
+                      value={newGuardianPhone}
+                      onChangeText={(value) => setNewGuardianPhone(formatPhoneInput(value))}
+                      placeholder="Phone Number"
+                      placeholderTextColor={theme.textSecondary}
+                      keyboardType="phone-pad"
+                      style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
+                    />
+                    <View style={styles.editActions}>
+                      <Pressable onPress={() => setAddingGuardian(false)}>
+                        <ThemedText themeColor="textSecondary">Cancel</ThemedText>
+                      </Pressable>
+                      <Pressable onPress={handleAddGuardian} disabled={savingNewGuardian}>
+                        {savingNewGuardian ? (
+                          <ActivityIndicator color={theme.text} />
+                        ) : (
+                          <ThemedText type="link">Add Guardian</ThemedText>
+                        )}
+                      </Pressable>
+                    </View>
+                  </ThemedView>
+                ) : (
+                  <Pressable onPress={() => setAddingGuardian(true)} style={styles.addLink}>
+                    <ThemedText type="link">+ Add a Guardian</ThemedText>
+                  </Pressable>
+                )}
+              </>
+            )}
           </ScrollView>
         )}
       </SafeAreaView>
@@ -511,6 +718,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: Spacing.three,
+    marginTop: Spacing.one,
+  },
+  addLink: {
     marginTop: Spacing.one,
   },
 });
